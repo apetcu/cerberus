@@ -1,0 +1,17 @@
+{
+  "name": "cerberus",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "build:agent-image": "docker build -f packages/agent/Dockerfile -t cerberus-agent:dev .",
+    "build:orchestrator-image": "docker build -f packages/orchestrator/Dockerfile -t cerberus-orchestrator:dev ."
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  }
+}
