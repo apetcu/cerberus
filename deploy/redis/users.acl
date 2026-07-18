@@ -1,0 +1,3 @@
+user default off
+user orchestrator on >orchestrator-dev-password ~* &* +@all
+user agent on >agent-dev-password ~mailbox:* ~outbox ~heartbeat:* +xadd +xreadgroup +xack +xgroup +xrange +set +del +ping +hello
