@@ -89,7 +89,7 @@ export class PostgresThreadRegistry implements ThreadRegistry {
 
   async listRecent(limit: number): Promise<ThreadRecord[]> {
     const { rows } = await this.pool.query<Row>(
-      'SELECT * FROM threads ORDER BY last_activity_at DESC LIMIT $1', [limit],
+      'SELECT * FROM threads ORDER BY last_activity_at DESC, thread_key ASC LIMIT $1', [limit],
     );
     return rows.map(toRecord);
   }

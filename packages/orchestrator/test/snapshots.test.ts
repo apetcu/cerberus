@@ -97,4 +97,43 @@ describe('SnapshotBuilder', () => {
   it('detail returns null for an unknown thread', async () => {
     expect(await build(fakeRuntime([]), fakeRedis(0, 0)).detail('nope')).toBeNull();
   });
+
+  it('skips an agent whose summary fails instead of blanking the fleet', async () => {
+    const badKey = 'T1-C1-2.3';
+    await registry.upsertActivity({
+      threadKey: badKey, teamId: 'T1', channelId: 'C1', threadTs: '2.3',
+      runtime: 'docker', workspacePath: join(ws, badKey),
+    });
+    // Inject a record with deliberately broken createdAt so toISOString() throws
+    const records = await registry.listRecent(10);
+    const badRecord = records.find((r) => r.threadKey === badKey)!;
+    Object.defineProperty(badRecord, 'createdAt', {
+      value: null,
+      configurable: true,
+    });
+    // Replace listRecent to inject the corrupted record
+    const originalListRecent = registry.listRecent.bind(registry);
+    (registry as unknown as { listRecent: (limit: number) => Promise<typeof records> }).listRecent =
+      async () => {
+        const all = await originalListRecent(10);
+        return all.map((r) => (r.threadKey === badKey ? badRecord : r));
+      };
+
+    const snap = await build(fakeRuntime([]), fakeRedis(0, 0)).overview();
+    expect(snap.agents.map((a) => a.threadKey)).toEqual([KEY]);
+  });
+
+  it('orders listRecent deterministically when timestamps tie', async () => {
+    const other = 'T1-C1-0.1';
+    await registry.upsertActivity({
+      threadKey: other, teamId: 'T1', channelId: 'C1', threadTs: '0.1',
+      runtime: 'docker', workspacePath: join(ws, other),
+    });
+    const rows = await registry.listRecent(10);
+    const tied = rows.filter((r) => r.lastActivityAt.getTime() === rows[0]!.lastActivityAt.getTime());
+    if (tied.length > 1) {
+      expect([...tied].map((r) => r.threadKey)).toEqual([...tied].map((r) => r.threadKey).sort());
+    }
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+  });
 });

@@ -29,7 +29,16 @@ export class SnapshotBuilder {
   async overview(): Promise<OverviewSnapshot> {
     const records = await this.deps.registry.listRecent(MAX_AGENTS);
     const { live, healthy } = await this.liveHandles();
-    const agents = await Promise.all(records.map((r) => this.summarize(r, live)));
+    // allSettled, not all: one malformed record must not blank the whole fleet view.
+    const settled = await Promise.allSettled(records.map((r) => this.summarize(r, live)));
+    const agents = settled.flatMap((result, index) => {
+      if (result.status === 'fulfilled') return [result.value];
+      this.deps.log.warn(
+        { err: result.reason, threadKey: records[index]?.threadKey },
+        'skipping agent in overview snapshot',
+      );
+      return [];
+    });
 
     const counts = {
       total: agents.length,
@@ -56,7 +65,11 @@ export class SnapshotBuilder {
     const summary = await this.summarize(record, live);
     const [conversation, stored] = await Promise.all([
       this.readConversation(record.workspacePath),
-      this.deps.capabilities.get(threadKey),
+      // A capabilities-store failure degrades to defaults rather than blanking the whole view.
+      this.deps.capabilities.get(threadKey).catch((err) => {
+        this.deps.log.warn({ err, threadKey }, 'capabilities lookup failed; using defaults');
+        return null;
+      }),
     ]);
     return {
       ...summary,

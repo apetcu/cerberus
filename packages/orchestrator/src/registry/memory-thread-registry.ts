@@ -70,7 +70,9 @@ export class MemoryThreadRegistry implements ThreadRegistry {
 
   async listRecent(limit: number): Promise<ThreadRecord[]> {
     return [...this.rows.values()]
-      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
+      .sort((a, b) =>
+        b.lastActivityAt.getTime() - a.lastActivityAt.getTime() ||
+        a.threadKey.localeCompare(b.threadKey))
       .slice(0, limit)
       .map((r) => ({ ...r }));
   }
