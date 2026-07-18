@@ -9,7 +9,7 @@ import { DockerRuntime } from '../src/runtime/docker-runtime.js';
 
 const KEY = 'T9-C9-9.9';
 let ws: string;
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+const docker = new Docker();
 const runtime = new DockerRuntime(docker);
 
 const spec = (): AgentSpec => ({
