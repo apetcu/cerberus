@@ -1,0 +1,74 @@
+# Same ACL content as deploy/redis/users.acl (dev credentials). In real prod,
+# load this from a Secret instead of a ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-acl
+  namespace: cerberus
+data:
+  users.acl: |
+    user default off
+    user orchestrator on >orchestrator-dev-password ~* &* +@all
+    user agent on >agent-dev-password ~mailbox:* ~outbox ~heartbeat:* +xadd +xreadgroup +xack +xgroup +xrange +set +del +ping +hello
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  namespace: cerberus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: cerberus
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--appendonly", "yes", "--aclfile", "/etc/redis/users.acl"]
+          ports:
+            - containerPort: 6379
+              name: redis
+          volumeMounts:
+            - name: acl
+              mountPath: /etc/redis/users.acl
+              subPath: users.acl
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: acl
+          configMap:
+            name: redis-acl
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: cerberus
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

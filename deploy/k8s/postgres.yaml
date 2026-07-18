@@ -1,0 +1,75 @@
+# Dev credentials, matching deploy/docker-compose.yml. DATABASE_URL is stored
+# alongside the individual fields so the orchestrator Deployment can pull the
+# exact same connection string via secretKeyRef.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cerberus-postgres
+  namespace: cerberus
+type: Opaque
+stringData:
+  POSTGRES_USER: cerberus
+  POSTGRES_PASSWORD: cerberus
+  POSTGRES_DB: cerberus
+  DATABASE_URL: postgres://cerberus:cerberus@postgres:5432/cerberus
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: cerberus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: cerberus
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef:
+                name: cerberus-postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: cerberus
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

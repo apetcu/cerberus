@@ -1,0 +1,82 @@
+# cerberus-slack (SLACK_BOT_TOKEN, SLACK_APP_TOKEN) is created out-of-band,
+# e.g.:
+#   kubectl -n cerberus create secret generic cerberus-slack \
+#     --from-literal=SLACK_BOT_TOKEN=xoxb-... \
+#     --from-literal=SLACK_APP_TOKEN=xapp-...
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: cerberus
+  labels:
+    app: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      serviceAccountName: cerberus-orchestrator
+      containers:
+        - name: orchestrator
+          image: cerberus-orchestrator:dev
+          env:
+            - name: RUNTIME
+              value: k8s
+            - name: K8S_NAMESPACE
+              value: cerberus
+            - name: K8S_WORKSPACE_PVC
+              value: cerberus-workspaces
+            - name: REDIS_URL
+              value: redis://orchestrator:orchestrator-dev-password@redis:6379
+            - name: AGENT_REDIS_URL
+              value: redis://agent:agent-dev-password@redis:6379
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cerberus-postgres
+                  key: DATABASE_URL
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cerberus-slack
+                  key: SLACK_BOT_TOKEN
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cerberus-slack
+                  key: SLACK_APP_TOKEN
+          ports:
+            - containerPort: 8080
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # No /var/run/docker.sock mount: the RUNTIME=k8s path spawns agents
+          # via the Kubernetes API using the cerberus-orchestrator ServiceAccount
+          # (see deploy/k8s/rbac.yaml), not the Docker daemon.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: cerberus
+spec:
+  selector:
+    app: orchestrator
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -1,0 +1,18 @@
+# Shared workspace storage. Agent pods mount this PVC with subPath: <threadKey>
+# (see packages/orchestrator/src/runtime/k8s-runtime.ts) so every agent needs its
+# own directory on the same volume, hence ReadWriteMany.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cerberus-workspaces
+  namespace: cerberus
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName intentionally omitted: use the cluster default.
+  # On a single-node cluster (e.g. k3s) without an RWX-capable provisioner,
+  # set accessModes to ReadWriteOnce instead -- a single node can still
+  # schedule every agent pod against the same volume.
