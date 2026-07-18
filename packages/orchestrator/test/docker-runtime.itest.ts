@@ -9,7 +9,12 @@ import { DockerRuntime } from '../src/runtime/docker-runtime.js';
 
 const KEY = 'T9-C9-9.9';
 let ws: string;
-const docker = new Docker();
+// Honor DOCKER_HOST (Colima/rootless/remote); otherwise pin the standard socket —
+// dockerode's own default can resolve to a different daemon than the docker CLI
+// when multiple engines are installed (e.g. Docker Desktop alongside OrbStack).
+const docker = process.env.DOCKER_HOST
+  ? new Docker()
+  : new Docker({ socketPath: '/var/run/docker.sock' });
 const runtime = new DockerRuntime(docker);
 
 const spec = (): AgentSpec => ({
