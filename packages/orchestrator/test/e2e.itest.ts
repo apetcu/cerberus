@@ -78,7 +78,7 @@ afterAll(async () => {
   await pool?.end();
   await redisC?.stop();
   await pgC?.stop();
-  await rm(ws, { recursive: true, force: true });
+  if (ws) await rm(ws, { recursive: true, force: true });
 });
 
 async function waitForReply(containing: string, timeoutMs = 60_000): Promise<void> {
