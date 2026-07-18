@@ -100,4 +100,54 @@ describe('K8sRuntime', () => {
       name: agentName(KEY), namespace: 'cerberus', gracePeriodSeconds: 30,
     });
   });
+
+  it('keeps emitting new lines after the tail window saturates', async () => {
+    const windows = [
+      'a\nb\nc',      // tail=3 window, full
+      'b\nc\nd',      // rolled: only "d" is new
+      'c\nd\ne',      // rolled: only "e" is new
+    ];
+    let call = 0;
+    const api: PodApi = {
+      createNamespacedPod: vi.fn(async ({ body }) => body),
+      deleteNamespacedPod: vi.fn(async () => ({})),
+      listNamespacedPod: vi.fn(async () => ({ items: [] })),
+      readNamespacedPodLog: vi.fn(async () => windows[Math.min(call++, windows.length - 1)]!),
+    };
+    const runtime = new K8sRuntime(api, cfg);
+    const handle = { id: 'u1', name: agentName(KEY), threadKey: KEY, running: true };
+
+    const ac = new AbortController();
+    const seen: string[] = [];
+    const done = (async () => {
+      for await (const line of runtime.logs(handle, { tail: 3, follow: true, signal: ac.signal })) {
+        seen.push(line);
+        if (seen.length >= 5) ac.abort();
+      }
+    })();
+    await Promise.race([done, new Promise((r) => setTimeout(r, 9000))]);
+    ac.abort();
+
+    expect(seen.slice(0, 3)).toEqual(['a', 'b', 'c']);
+    expect(seen).toContain('d');
+    expect(seen).toContain('e');
+  }, 15000);
+
+  it('yields nothing when the signal is already aborted', async () => {
+    const api: PodApi = {
+      createNamespacedPod: vi.fn(async ({ body }) => body),
+      deleteNamespacedPod: vi.fn(async () => ({})),
+      listNamespacedPod: vi.fn(async () => ({ items: [] })),
+      readNamespacedPodLog: vi.fn(async () => 'x'),
+    };
+    const ac = new AbortController();
+    ac.abort();
+    const seen: string[] = [];
+    for await (const line of new K8sRuntime(api, cfg).logs(
+      { id: 'u1', name: agentName(KEY), threadKey: KEY, running: true },
+      { tail: 10, follow: true, signal: ac.signal },
+    )) seen.push(line);
+    expect(seen).toEqual([]);
+    expect(api.readNamespacedPodLog).not.toHaveBeenCalled();
+  });
 });

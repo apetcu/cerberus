@@ -4,6 +4,7 @@ import {
   agentName, ROLE_LABEL, THREAD_LABEL,
   type AgentHandle, type AgentRuntime, type AgentSpec, type LogOptions,
 } from './agent-runtime.js';
+import { createFrameDecoder } from './docker-log-frames.js';
 
 export class DockerRuntime implements AgentRuntime {
   constructor(
@@ -78,61 +79,55 @@ export class DockerRuntime implements AgentRuntime {
   }
 
   async *logs(handle: AgentHandle, opts: LogOptions): AsyncIterable<string> {
-    const container = this.docker.getContainer(handle.id);
-    // dockerode's `logs` overloads key off a *literal* `follow` type: `follow: false` resolves
-    // a buffered Promise<Buffer>, `follow: true` a Promise<ReadableStream>. Branching on the
-    // literal (rather than passing `opts.follow` through) is what makes each overload apply.
-    const raw = opts.follow
-      ? await container.logs({ follow: true, stdout: true, stderr: true, tail: opts.tail })
-      : await container.logs({ follow: false, stdout: true, stderr: true, tail: opts.tail });
-    const stream: NodeJS.ReadableStream = Buffer.isBuffer(raw) ? Readable.from([raw]) : raw;
+    if (opts.signal?.aborted) return;
 
+    const container = this.docker.getContainer(handle.id);
+    let stream: NodeJS.ReadableStream | null = null;
     let aborted = false;
-    const abort = () => {
+
+    // Registered before any await: a signal that fires while the logs call is in flight
+    // must still be observed, otherwise a follow stream never terminates.
+    const abort = (): void => {
       aborted = true;
-      (stream as unknown as { destroy?: () => void }).destroy?.();
+      (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
     };
     opts.signal?.addEventListener('abort', abort, { once: true });
 
-    let buffer = '';
+    const decoder = createFrameDecoder();
+    let lineBuffer = '';
+
     try {
+      // dockerode's `logs` overloads key off a *literal* `follow` type: `follow: false`
+      // resolves a buffered Promise<Buffer>, `follow: true` a Promise<ReadableStream>.
+      // Branching on the literal (rather than passing `opts.follow` through) is what
+      // makes each overload apply.
+      const raw = opts.follow
+        ? await container.logs({ follow: true, stdout: true, stderr: true, tail: opts.tail })
+        : await container.logs({ follow: false, stdout: true, stderr: true, tail: opts.tail });
+      if (aborted || opts.signal?.aborted) return;
+
+      // With follow:false dockerode resolves the whole body as a Buffer, not a stream.
+      stream = Buffer.isBuffer(raw) ? Readable.from([raw]) : (raw as unknown as NodeJS.ReadableStream);
+
       for await (const chunk of stream) {
-        buffer += stripDockerFraming(chunk as Buffer);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        if (aborted) break;
+        lineBuffer += decoder.push(chunk as Buffer);
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() ?? '';
         for (const line of lines) yield line;
       }
-      if (buffer.length > 0) yield buffer;
+
+      if (!aborted) {
+        lineBuffer += decoder.flush();
+        if (lineBuffer.length > 0) yield lineBuffer;
+      }
     } catch (err) {
-      // Destroying the stream mid-read to honor an abort surfaces as a stream error
-      // (e.g. "Premature close"); that's the intended shutdown, not a failure.
+      // Destroying the stream to honor an abort surfaces as a premature-close error; that is
+      // the intended teardown, not a failure. Anything else is real.
       if (!aborted) throw err;
     } finally {
       opts.signal?.removeEventListener('abort', abort);
-      abort();
+      if (!aborted) (stream as unknown as { destroy?: () => void } | null)?.destroy?.();
     }
   }
-}
-
-/**
- * Docker multiplexes non-TTY container output into 8-byte framed chunks:
- * [stream_type, 0, 0, 0, len_be32] followed by len payload bytes. Strip the headers
- * so consumers see plain text rather than control bytes.
- */
-function stripDockerFraming(chunk: Buffer): string {
-  let out = '';
-  let offset = 0;
-  while (offset < chunk.length) {
-    const isFrameHeader =
-      chunk.length - offset >= 8 && chunk[offset]! <= 2 &&
-      chunk[offset + 1] === 0 && chunk[offset + 2] === 0 && chunk[offset + 3] === 0;
-    if (!isFrameHeader) {
-      out += chunk.subarray(offset).toString('utf8');
-      break;
-    }
-    const size = chunk.readUInt32BE(offset + 4);
-    out += chunk.subarray(offset + 8, offset + 8 + size).toString('utf8');
-    offset += 8 + size;
-  }
-  return out;
 }
