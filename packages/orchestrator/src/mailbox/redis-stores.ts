@@ -11,6 +11,8 @@ export interface StreamsClient {
   xautoclaim(...args: (string | number)[]): Promise<unknown>;
   set(...args: (string | number)[]): Promise<unknown>;
   del(key: string): Promise<unknown>;
+  xlen(key: string): Promise<number>;
+  exists(key: string): Promise<number>;
 }
 
 const DEDUP_TTL_S = 86_400;

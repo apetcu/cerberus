@@ -21,4 +21,6 @@ export interface ThreadRegistry {
   countByStatus(status: ThreadStatus): Promise<number>;
   listByStatus(status: ThreadStatus): Promise<ThreadRecord[]>;
   listRunningIdleSince(cutoff: Date): Promise<ThreadRecord[]>;
+  /** Most recently active threads first. */
+  listRecent(limit: number): Promise<ThreadRecord[]>;
 }

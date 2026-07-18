@@ -67,4 +67,11 @@ export class MemoryThreadRegistry implements ThreadRegistry {
       .filter((r) => r.status === 'running' && r.lastActivityAt < cutoff)
       .map((r) => ({ ...r }));
   }
+
+  async listRecent(limit: number): Promise<ThreadRecord[]> {
+    return [...this.rows.values()]
+      .sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime())
+      .slice(0, limit)
+      .map((r) => ({ ...r }));
+  }
 }

@@ -20,6 +20,8 @@ function fakes(claimResult = true) {
     xautoclaim: vi.fn(async () => ['0-0', [], []]),
     set: vi.fn(async () => 'OK'),
     del: vi.fn(async () => 1),
+    xlen: vi.fn(async () => 0),
+    exists: vi.fn(async () => 0),
   } satisfies StreamsClient & Record<string, unknown>;
   const posted: string[] = [];
   const poster: SlackPoster = { postToThread: vi.fn(async (_k, text) => { posted.push(text); }) };
