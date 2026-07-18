@@ -68,6 +68,20 @@ describe('K8sRuntime', () => {
     expect(handle.running).toBe(true);
   });
 
+  it('recreates when 409 but the pod vanished (delete 404 tolerated)', async () => {
+    let first = true;
+    const api: PodApi = {
+      createNamespacedPod: vi.fn(async ({ body }) => {
+        if (first) { first = false; throw Object.assign(new Error('conflict'), { code: 409 }); }
+        return body;
+      }),
+      deleteNamespacedPod: vi.fn(async () => { throw Object.assign(new Error('gone'), { code: 404 }); }),
+      listNamespacedPod: vi.fn(async () => ({ items: [] })),
+    };
+    const handle = await new K8sRuntime(api, cfg).spawn(spec);
+    expect(handle.running).toBe(true);
+  });
+
   it('list maps pods to handles; stop deletes with grace', async () => {
     const api: PodApi = {
       createNamespacedPod: vi.fn(async ({ body }) => body),

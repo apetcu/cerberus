@@ -83,7 +83,10 @@ export class MailboxConsumer {
   }
 
   private async handleUserMessage(msg: AgentInbound): Promise<void> {
-    await this.store.append({ id: msg.id, role: 'user', text: msg.text ?? '', ts: new Date().toISOString() });
+    const existing = await this.store.load();
+    if (!existing.some((e) => e.id === msg.id)) {
+      await this.store.append({ id: msg.id, role: 'user', text: msg.text ?? '', ts: new Date().toISOString() });
+    }
     const ctx: BrainContext = {
       threadKey: this.threadKey,
       workspacePath: this.workspacePath,

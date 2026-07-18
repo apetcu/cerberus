@@ -114,4 +114,13 @@ describe('MailboxConsumer', () => {
     expect(redis.acked).toHaveLength(2);
     expect(redis.added.map((a) => a.stream)).toEqual([OUTBOX_STREAM, OUTBOX_STREAM]);
   });
+
+  it('does not double-append a replayed user message', async () => {
+    redis.push(userMsg('m1', 'hello'));
+    await consumer.runOnce(1);
+    redis.push(userMsg('m1', 'hello')); // same id redelivered after a crash
+    await consumer.runOnce(1);
+    const history = await new WorkspaceStore(root).load();
+    expect(history.filter((e) => e.role === 'user')).toHaveLength(1);
+  });
 });

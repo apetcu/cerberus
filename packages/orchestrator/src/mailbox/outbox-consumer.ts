@@ -42,7 +42,9 @@ export class OutboxConsumer {
       await this.redis.xack(OUTBOX_STREAM, GROUP, entryId);
     } catch (err) {
       // Post failed: release the claim and leave unacked; claimStale() retries it.
-      await this.guard.release(decoded.id).catch(() => {});
+      await this.guard.release(decoded.id).catch((releaseErr) => {
+        this.log.error({ releaseErr, outboundId: decoded.id }, 'delivery-guard release failed; retry may be starved');
+      });
       this.log.error({ err, entryId, threadKey: decoded.threadKey }, 'outbox delivery failed');
     }
   }
@@ -69,9 +71,14 @@ export class OutboxConsumer {
     await this.ensureGroup();
     let cycles = 0;
     while (!signal.aborted) {
-      await this.runOnce(5000);
-      if (++cycles % 12 === 0) {
-        await this.claimStale().catch((err) => this.log.error({ err }, 'claimStale failed'));
+      try {
+        await this.runOnce(5000);
+        if (++cycles % 12 === 0) {
+          await this.claimStale().catch((err) => this.log.error({ err }, 'claimStale failed'));
+        }
+      } catch (err) {
+        this.log.error({ err }, 'outbox loop error; retrying after backoff');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
   }

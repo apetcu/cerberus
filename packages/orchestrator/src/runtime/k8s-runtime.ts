@@ -80,9 +80,13 @@ export class K8sRuntime implements AgentRuntime {
       const existing = await this.inspect(agentName(spec.threadKey));
       if (existing?.running) return existing;
       // Dead pod with the same name: replace it.
-      await this.api.deleteNamespacedPod({
-        name: agentName(spec.threadKey), namespace: this.cfg.namespace, gracePeriodSeconds: 0,
-      });
+      try {
+        await this.api.deleteNamespacedPod({
+          name: agentName(spec.threadKey), namespace: this.cfg.namespace, gracePeriodSeconds: 0,
+        });
+      } catch (delErr) {
+        if ((delErr as { code?: number }).code !== 404) throw delErr;
+      }
       const pod = await this.api.createNamespacedPod({
         namespace: this.cfg.namespace,
         body: buildPodManifest(spec, this.cfg),

@@ -14,7 +14,7 @@ const env = z.object({
 }).parse(process.env);
 
 const log = pino({ level: env.LOG_LEVEL, base: { threadKey: env.THREAD_KEY } });
-const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
+const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null, enableReadyCheck: false });
 const consumer = new MailboxConsumer(
   redis as unknown as StreamsClient,
   new StubBrain(),

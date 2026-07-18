@@ -1,10 +1,12 @@
-import { mkdir } from 'node:fs/promises';
+import { chown, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ThreadRecord } from '../domain/thread.js';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentRuntime, AgentSpec, ResourceLimits } from '../runtime/agent-runtime.js';
 import { KeyedMutex } from './keyed-mutex.js';
+
+const AGENT_UID = 1000; // matches USER node in packages/agent/Dockerfile
 
 export interface SupervisorConfig {
   runtime: 'docker' | 'k8s';
@@ -39,7 +41,13 @@ export class ThreadSupervisor {
   private readonly ensureDir: (path: string) => Promise<void>;
 
   constructor(private readonly deps: SupervisorDeps, private readonly cfg: SupervisorConfig) {
-    this.ensureDir = deps.ensureDir ?? (async (p) => { await mkdir(p, { recursive: true }); });
+    this.ensureDir = deps.ensureDir ?? (async (p) => {
+      await mkdir(p, { recursive: true });
+      // Agents run as uid 1000 with a read-only rootfs: the orchestrator (root inside
+      // its container) must hand the workspace over or the agent cannot write to it.
+      // Best-effort: no-op when the orchestrator itself isn't root (local dev).
+      await chown(p, AGENT_UID, AGENT_UID).catch(() => {});
+    });
   }
 
   async ensureRunning(p: EnsureParams): Promise<{ record: ThreadRecord; outcome: EnsureOutcome }> {

@@ -67,7 +67,7 @@ beforeAll(async () => {
     dedup: new RedisDedupStore(sc), producer: new MailboxProducer(sc), supervisor, poster, log,
   });
   outbox = new OutboxConsumer(sc, poster, new RedisDeliveryGuard(sc), log);
-  void outbox.run(ac.signal);
+  void outbox.run(ac.signal).catch(() => {});
 });
 
 afterAll(async () => {

@@ -77,7 +77,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
           postgres: async () => { await pool.query('SELECT 1'); },
         },
       });
-      outboxDone = outbox.run(ac.signal);
+      outboxDone = outbox.run(ac.signal).catch((err) => log.error({ err }, 'outbox consumer terminated'));
       reaper.start(cfg.REAPER_INTERVAL_MS, ac.signal);
       sampler = setInterval(() => {
         void registry.countByStatus('running')
