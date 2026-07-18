@@ -3,3 +3,4 @@ workspaces/
 .env
 *.log
 .superpowers/
+.env.temp

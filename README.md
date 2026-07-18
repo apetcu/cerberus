@@ -162,9 +162,11 @@ Environment variables (loaded from `deploy/.env` in production):
 | `RUNTIME` | `docker` | `docker` for local dev; `k8s` for Kubernetes |
 | `AGENT_NETWORK` | `cerberus-agents` | Docker network name for agent spawning |
 | `AGENT_IMAGE` | `cerberus-agent:dev` | Image name for spawned agent containers |
+| `AGENT_REDIS_URL` | — | Redis URL as reachable from agent containers |
 | `IDLE_TIMEOUT_MS` | `1800000` | 30 minutes; containers stop after no activity |
 | `MAX_CONCURRENT_AGENTS` | `50` | Backpressure cap; new threads queue if exceeded |
 | `WORKSPACES_ROOT` | `/workspaces` | Mounted path where agent workspaces live |
+| `WORKSPACES_HOST_ROOT` | — | Host path prefix for Docker bind mounts |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Project structure
@@ -232,7 +234,7 @@ Verify Slack tokens are correct in `.env`.
 
 Check if the outbox is stuck:
 ```bash
-docker compose exec redis redis-cli --user agent --pass agent-dev-password XLEN outbox
+docker compose exec redis redis-cli --user orchestrator --pass orchestrator-dev-password XLEN outbox
 ```
 
 View orchestrator metrics to see message latency:
@@ -244,7 +246,7 @@ curl http://localhost:8080/metrics | grep slack_message_latency
 
 If agent containers fail with "NOAUTH" or permission errors, verify the ACL file is loaded:
 ```bash
-docker compose exec redis redis-cli ACL LIST
+docker compose exec redis redis-cli --user orchestrator --pass orchestrator-dev-password ACL LIST
 ```
 
 It should show `user agent` with restricted key patterns.
