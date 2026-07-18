@@ -5,6 +5,7 @@ import type { SlackPoster } from '../mailbox/outbox-consumer.js';
 import type { DedupStore, MailboxProducer } from '../mailbox/redis-stores.js';
 import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
+import type { EventBus } from '../api/events.js';
 
 export interface NormalizedSlackMessage {
   teamId: string;
@@ -29,13 +30,14 @@ export interface RouterDeps {
   reactor: SlackReactor;
   log: Logger;
   metrics?: Metrics;
+  events?: EventBus;
 }
 
 export class EventRouter {
   constructor(private readonly deps: RouterDeps) {}
 
   async handle(evt: NormalizedSlackMessage): Promise<'duplicate' | 'accepted'> {
-    const { dedup, producer, supervisor, poster, reactor, log, metrics } = this.deps;
+    const { dedup, producer, supervisor, poster, reactor, log, metrics, events } = this.deps;
     // Message identity, not Slack event_id: collapses app_mention+message double delivery and retries.
     if (!(await dedup.markSeen(`${evt.channelId}:${evt.ts}`))) return 'duplicate';
 
@@ -59,6 +61,7 @@ export class EventRouter {
     });
     metrics?.spawnsTotal.inc({ outcome });
     log.info({ threadKey, outcome }, 'inbound message routed');
+    events?.publish({ kind: 'message_routed', threadKey, at: new Date().toISOString() });
 
     if (outcome === 'failed') {
       await poster.postToThread(threadKey, ':warning: Could not start your agent — I will retry on your next message.');

@@ -2,6 +2,7 @@ import type { Logger } from '../observability/logger.js';
 import type { Metrics } from '../observability/metrics.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentRuntime } from '../runtime/agent-runtime.js';
+import type { EventBus } from '../api/events.js';
 
 export interface ReaperDeps {
   registry: ThreadRegistry;
@@ -10,6 +11,7 @@ export interface ReaperDeps {
   log: Logger;
   metrics?: Metrics;
   now?: () => Date;
+  events?: EventBus;
 }
 
 export class IdleReaper {
@@ -35,6 +37,7 @@ export class IdleReaper {
         await registry.setStatus(rec.threadKey, 'stopped', { containerId: null, containerName: null });
         metrics?.reapedTotal.inc();
         log.info({ threadKey: rec.threadKey }, 'idle agent reaped');
+        this.deps.events?.publish({ kind: 'agent_stopped', threadKey: rec.threadKey, at: new Date().toISOString() });
       } catch (err) {
         log.error({ err, threadKey: rec.threadKey }, 'reap failed');
       }

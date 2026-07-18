@@ -4,6 +4,7 @@ import type { ThreadRecord } from '../domain/thread.js';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentRuntime, AgentSpec, ResourceLimits } from '../runtime/agent-runtime.js';
+import type { EventBus } from '../api/events.js';
 import { KeyedMutex } from './keyed-mutex.js';
 
 const AGENT_UID = 1000; // matches USER node in packages/agent/Dockerfile
@@ -34,6 +35,7 @@ export interface SupervisorDeps {
   runtime: AgentRuntime;
   log: Logger;
   ensureDir?: (path: string) => Promise<void>;
+  events?: EventBus;
 }
 
 export class ThreadSupervisor {
@@ -79,12 +81,14 @@ export class ThreadSupervisor {
       });
       record = (await registry.get(p.threadKey))!;
       log.info({ threadKey: p.threadKey, container: handle.name }, 'agent spawned');
+      this.deps.events?.publish({ kind: 'agent_spawned', threadKey: p.threadKey, at: new Date().toISOString() });
       return { record, outcome: 'spawned' };
     } catch (err) {
       await registry.recordFailure(p.threadKey);
       await registry.setStatus(p.threadKey, 'failed');
       record = (await registry.get(p.threadKey))!;
       log.error({ err, threadKey: p.threadKey }, 'agent spawn failed');
+      this.deps.events?.publish({ kind: 'agent_failed', threadKey: p.threadKey, at: new Date().toISOString() });
       return { record, outcome: 'failed' };
     }
   }
