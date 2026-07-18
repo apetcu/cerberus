@@ -80,6 +80,10 @@ export class SlackGateway implements SlackPoster {
     }
   }
 
+  async addReaction(channelId: string, ts: string, emoji: string): Promise<void> {
+    await this.app.client.reactions.add({ channel: channelId, timestamp: ts, name: emoji });
+  }
+
   async start(): Promise<void> { await this.app.start(); }
   async stop(): Promise<void> { await this.app.stop(); }
 }

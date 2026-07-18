@@ -17,11 +17,16 @@ export interface NormalizedSlackMessage {
   userDisplay: string;
 }
 
+export interface SlackReactor {
+  addReaction(channelId: string, ts: string, emoji: string): Promise<void>;
+}
+
 export interface RouterDeps {
   dedup: DedupStore;
   producer: Pick<MailboxProducer, 'publish'>;
   supervisor: Pick<ThreadSupervisor, 'ensureRunning'>;
   poster: SlackPoster;
+  reactor: SlackReactor;
   log: Logger;
   metrics?: Metrics;
 }
@@ -30,9 +35,15 @@ export class EventRouter {
   constructor(private readonly deps: RouterDeps) {}
 
   async handle(evt: NormalizedSlackMessage): Promise<'duplicate' | 'accepted'> {
-    const { dedup, producer, supervisor, poster, log, metrics } = this.deps;
+    const { dedup, producer, supervisor, poster, reactor, log, metrics } = this.deps;
     // Message identity, not Slack event_id: collapses app_mention+message double delivery and retries.
     if (!(await dedup.markSeen(`${evt.channelId}:${evt.ts}`))) return 'duplicate';
+
+    // Instant "seen" ack; fire-and-forget so a failure (e.g. missing reactions:write scope)
+    // never delays or breaks routing.
+    void reactor.addReaction(evt.channelId, evt.ts, 'eyes').catch((err) => {
+      log.warn({ err, channel: evt.channelId, ts: evt.ts }, 'failed to add seen reaction');
+    });
 
     const threadKey = buildThreadKey({ teamId: evt.teamId, channelId: evt.channelId, threadTs: evt.threadTs });
     metrics?.messagesInbound.inc();

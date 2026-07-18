@@ -22,7 +22,7 @@ export class MailboxConsumer {
     private readonly store: WorkspaceStore,
     private readonly threadKey: string,
     private readonly workspacePath: string,
-    private readonly log: Pick<Console, 'error'> = console,
+    private readonly log: Pick<Console, 'error' | 'info'> = console,
   ) {}
 
   private get key(): string {
@@ -72,6 +72,7 @@ export class MailboxConsumer {
     }
     let result: 'processed' | 'shutdown' = 'processed';
     if (msg.kind === 'control') {
+      this.log.info(`control message received: ${msg.control ?? 'unknown'}`);
       if (msg.control === 'shutdown') result = 'shutdown';
     } else {
       // Processing errors propagate: the entry stays unacked and is replayed by
@@ -83,6 +84,7 @@ export class MailboxConsumer {
   }
 
   private async handleUserMessage(msg: AgentInbound): Promise<void> {
+    this.log.info(`user message ${msg.id} from ${msg.user?.display ?? 'unknown'}: ${msg.text ?? ''}`);
     const existing = await this.store.load();
     if (!existing.some((e) => e.id === msg.id)) {
       await this.store.append({ id: msg.id, role: 'user', text: msg.text ?? '', ts: new Date().toISOString() });
@@ -93,6 +95,7 @@ export class MailboxConsumer {
       history: await this.store.load(),
     };
     for await (const out of this.brain.process(msg, ctx)) {
+      this.log.info(`reply ${out.kind}${out.final ? ' (final)' : ''}: ${out.text}`);
       await this.redis.xadd(OUTBOX_STREAM, 'MAXLEN', '~', 10000, '*', ...encodePayload(out));
       if (out.final && out.kind === 'message') {
         await this.store.append({ id: out.id, role: 'agent', text: out.text, ts: new Date().toISOString() });

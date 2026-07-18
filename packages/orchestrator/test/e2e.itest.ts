@@ -64,7 +64,8 @@ beforeAll(async () => {
   });
   const poster: SlackPoster = { postToThread: async (threadKey, text) => { posted.push({ threadKey, text }); } };
   router = new EventRouter({
-    dedup: new RedisDedupStore(sc), producer: new MailboxProducer(sc), supervisor, poster, log,
+    dedup: new RedisDedupStore(sc), producer: new MailboxProducer(sc), supervisor, poster,
+    reactor: { addReaction: async () => {} }, log,
   });
   outbox = new OutboxConsumer(sc, poster, new RedisDeliveryGuard(sc), log);
   void outbox.run(ac.signal).catch(() => {});

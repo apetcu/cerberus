@@ -15,12 +15,28 @@ function make(outcome: 'spawned' | 'deferred' | 'failed' | 'already-running' = '
     producer: { publish: vi.fn(async () => {}), publishControl: vi.fn(async () => {}) },
     supervisor: { ensureRunning: vi.fn(async () => ({ record: {} as never, outcome })) },
     poster: { postToThread: vi.fn(async () => {}) },
+    reactor: { addReaction: vi.fn(async () => {}) },
     log,
   };
   return { deps, router: new EventRouter(deps) };
 }
 
 describe('EventRouter.handle', () => {
+  it('adds an eyes reaction on accepted messages only', async () => {
+    const { deps, router } = make();
+    await router.handle(evt);
+    expect(deps.reactor.addReaction).toHaveBeenCalledWith('C1', '1.3', 'eyes');
+    await router.handle(evt); // duplicate
+    expect(deps.reactor.addReaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('still accepts the message when the reaction fails', async () => {
+    const { deps, router } = make();
+    deps.reactor.addReaction.mockRejectedValueOnce(new Error('missing_scope'));
+    expect(await router.handle(evt)).toBe('accepted');
+    expect(deps.producer.publish).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes to mailbox then ensures the agent (mailbox-first)', async () => {
     const { deps, router } = make();
     expect(await router.handle(evt)).toBe('accepted');

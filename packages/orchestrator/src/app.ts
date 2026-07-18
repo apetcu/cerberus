@@ -52,7 +52,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     registry, routerRef, log, metrics,
   );
   routerRef.current = new EventRouter({
-    dedup: new RedisDedupStore(redis), producer, supervisor, poster: gateway, log, metrics,
+    dedup: new RedisDedupStore(redis), producer, supervisor, poster: gateway, reactor: gateway, log, metrics,
   });
 
   const outbox = new OutboxConsumer(redis, gateway, new RedisDeliveryGuard(redis), log);

@@ -15,7 +15,10 @@ services:
       - ./workspaces:/workspaces
     ports: ["8080:8080"]
     networks: [control, agents]
-    depends_on: [redis, postgres]
+    restart: unless-stopped
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl"]
@@ -23,11 +26,21 @@ services:
       - ./redis/users.acl:/etc/redis/users.acl:ro
       - redis-data:/data
     networks: [control, agents]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-u", "redis://orchestrator:orchestrator-dev-password@localhost:6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   postgres:
     image: postgres:16-alpine
     environment: { POSTGRES_USER: cerberus, POSTGRES_PASSWORD: cerberus, POSTGRES_DB: cerberus }
     volumes: [pg-data:/var/lib/postgresql/data]
     networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cerberus -d cerberus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 networks:
   control: {}
   agents: { name: cerberus-agents }

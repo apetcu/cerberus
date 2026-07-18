@@ -9,7 +9,7 @@ Cerberus gives every Slack thread its own isolated agent container, managed by a
 - **Docker** (20.10+) — for orchestrator, Redis, Postgres, and agent container spawning
 - **pnpm** (8.0+) — for building and testing
 - **Slack App** with Socket Mode enabled, configured with the following:
-  - **OAuth scopes:** `app_mentions:read`, `chat:write`, `channels:history`
+  - **OAuth scopes:** `app_mentions:read`, `chat:write`, `channels:history`, `reactions:write` (instant :eyes: "seen" ack)
   - **Socket Mode events:** `app_mention`, `message.channels`
   - **App-level tokens** with `connections:write` scope
 
