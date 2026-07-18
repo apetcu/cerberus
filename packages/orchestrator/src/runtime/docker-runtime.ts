@@ -104,7 +104,13 @@ export class DockerRuntime implements AgentRuntime {
       const raw = opts.follow
         ? await container.logs({ follow: true, stdout: true, stderr: true, tail: opts.tail })
         : await container.logs({ follow: false, stdout: true, stderr: true, tail: opts.tail });
-      if (aborted || opts.signal?.aborted) return;
+      if (aborted || opts.signal?.aborted) {
+        // Aborted while the logs call was in flight: `stream` was still null when the abort
+        // handler ran, so the acquired handle must be destroyed here or the daemon
+        // connection leaks for the lifetime of the process.
+        if (!Buffer.isBuffer(raw)) (raw as unknown as { destroy?: () => void }).destroy?.();
+        return;
+      }
 
       // With follow:false dockerode resolves the whole body as a Buffer, not a stream.
       stream = Buffer.isBuffer(raw) ? Readable.from([raw]) : (raw as unknown as NodeJS.ReadableStream);

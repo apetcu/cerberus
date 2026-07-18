@@ -129,6 +129,7 @@ export class K8sRuntime implements AgentRuntime {
       const body = await this.api.readNamespacedPodLog({
         name: handle.name, namespace: this.cfg.namespace, tailLines: opts.tail,
       });
+      if (opts.signal?.aborted) return;
       const lines = body.split('\n').filter((l) => l.length > 0);
 
       let start = 0;
