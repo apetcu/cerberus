@@ -1,13 +1,14 @@
 import type { V1Pod } from '@kubernetes/client-node';
 import {
   agentName, ROLE_LABEL, THREAD_LABEL,
-  type AgentHandle, type AgentRuntime, type AgentSpec,
+  type AgentHandle, type AgentRuntime, type AgentSpec, type LogOptions,
 } from './agent-runtime.js';
 
 export interface PodApi {
   createNamespacedPod(p: { namespace: string; body: V1Pod }): Promise<V1Pod>;
   deleteNamespacedPod(p: { name: string; namespace: string; gracePeriodSeconds?: number }): Promise<unknown>;
   listNamespacedPod(p: { namespace: string; labelSelector?: string }): Promise<{ items: V1Pod[] }>;
+  readNamespacedPodLog(p: { name: string; namespace: string; tailLines?: number }): Promise<string>;
 }
 
 export interface K8sRuntimeConfig {
@@ -114,5 +115,21 @@ export class K8sRuntime implements AgentRuntime {
   async inspect(name: string): Promise<AgentHandle | null> {
     const pod = (await this.list()).find((h) => h.name === name);
     return pod ?? null;
+  }
+
+  async *logs(handle: AgentHandle, opts: LogOptions): AsyncIterable<string> {
+    // Kubernetes returns the tail as one body; following is polled rather than streamed
+    // so the same interface works without a second (SPDY) client.
+    let seen = 0;
+    do {
+      if (opts.signal?.aborted) return;
+      const body = await this.api.readNamespacedPodLog({
+        name: handle.name, namespace: this.cfg.namespace, tailLines: opts.tail,
+      });
+      const lines = body.split('\n').filter((l) => l.length > 0);
+      for (const line of lines.slice(seen)) yield line;
+      seen = lines.length;
+      if (opts.follow) await new Promise((r) => setTimeout(r, 2000));
+    } while (opts.follow && !opts.signal?.aborted);
   }
 }

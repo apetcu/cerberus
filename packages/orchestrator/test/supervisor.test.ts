@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import pino from 'pino';
 import { MemoryThreadRegistry } from '../src/registry/memory-thread-registry.js';
-import { agentName, type AgentHandle, type AgentRuntime, type AgentSpec } from '../src/runtime/agent-runtime.js';
+import {
+  agentName, type AgentHandle, type AgentRuntime, type AgentSpec, type LogOptions,
+} from '../src/runtime/agent-runtime.js';
 import { ThreadSupervisor, type SupervisorConfig } from '../src/lifecycle/supervisor.js';
 
 const log = pino({ level: 'silent' });
@@ -29,6 +31,8 @@ class FakeRuntime implements AgentRuntime {
   async stop(h: AgentHandle): Promise<void> { this.live.delete(h.name); }
   async list(): Promise<AgentHandle[]> { return [...this.live.values()]; }
   async inspect(name: string): Promise<AgentHandle | null> { return this.live.get(name) ?? null; }
+  // eslint-disable-next-line require-yield
+  async *logs(_handle: AgentHandle, _opts: LogOptions): AsyncIterable<string> {}
 }
 
 function make(runtimeOverrides: Partial<FakeRuntime> = {}) {

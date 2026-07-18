@@ -50,6 +50,7 @@ describe('K8sRuntime', () => {
       createNamespacedPod: vi.fn(async ({ body }) => body),
       deleteNamespacedPod: vi.fn(async () => ({})),
       listNamespacedPod: vi.fn(async () => ({ items: [] })),
+      readNamespacedPodLog: vi.fn(async () => ''),
     };
     const handle = await new K8sRuntime(api, cfg).spawn(spec);
     expect(api.createNamespacedPod).toHaveBeenCalledWith(
@@ -63,6 +64,7 @@ describe('K8sRuntime', () => {
       createNamespacedPod: vi.fn(async () => { throw Object.assign(new Error('conflict'), { code: 409 }); }),
       deleteNamespacedPod: vi.fn(async () => ({})),
       listNamespacedPod: vi.fn(async () => ({ items: [runningPod(KEY)] })),
+      readNamespacedPodLog: vi.fn(async () => ''),
     };
     const handle = await new K8sRuntime(api, cfg).spawn(spec);
     expect(handle.running).toBe(true);
@@ -77,6 +79,7 @@ describe('K8sRuntime', () => {
       }),
       deleteNamespacedPod: vi.fn(async () => { throw Object.assign(new Error('gone'), { code: 404 }); }),
       listNamespacedPod: vi.fn(async () => ({ items: [] })),
+      readNamespacedPodLog: vi.fn(async () => ''),
     };
     const handle = await new K8sRuntime(api, cfg).spawn(spec);
     expect(handle.running).toBe(true);
@@ -87,6 +90,7 @@ describe('K8sRuntime', () => {
       createNamespacedPod: vi.fn(async ({ body }) => body),
       deleteNamespacedPod: vi.fn(async () => ({})),
       listNamespacedPod: vi.fn(async () => ({ items: [runningPod(KEY)] })),
+      readNamespacedPodLog: vi.fn(async () => ''),
     };
     const rt = new K8sRuntime(api, cfg);
     const handles = await rt.list();

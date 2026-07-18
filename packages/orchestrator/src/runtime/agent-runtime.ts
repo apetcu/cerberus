@@ -24,11 +24,19 @@ export interface AgentHandle {
   running: boolean;
 }
 
+export interface LogOptions {
+  tail: number;
+  follow: boolean;
+  signal?: AbortSignal;
+}
+
 export interface AgentRuntime {
   spawn(spec: AgentSpec): Promise<AgentHandle>;
   stop(handle: AgentHandle, graceful: boolean): Promise<void>;
   list(): Promise<AgentHandle[]>;
   inspect(name: string): Promise<AgentHandle | null>;
+  /** Yields whole log lines (no trailing newline). Ends when the stream closes or the signal aborts. */
+  logs(handle: AgentHandle, opts: LogOptions): AsyncIterable<string>;
 }
 
 export const THREAD_LABEL = 'cerberus.thread-key';
