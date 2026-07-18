@@ -1869,7 +1869,8 @@ and after `server.listen(...)`:
 
 In `packages/orchestrator/src/config.ts`, add to the schema:
 ```typescript
-  DASHBOARD_ENABLED: z.coerce.boolean().default(true),
+  // NOT z.coerce.boolean(): it parses the string "false" as true (non-empty string).
+  DASHBOARD_ENABLED: z.string().default('true').transform((v) => v !== 'false'),
   DASHBOARD_TOKEN: z.string().default(''),
   DASHBOARD_DIST: z.string().default(''),   // '' resolves to packages/dashboard/dist
 ```
