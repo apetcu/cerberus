@@ -41,10 +41,14 @@ export class SlackGateway implements SlackPoster {
     this.app.event('message', async ({ event, body }) => {
       const e = event as unknown as SlackMessageEvent;
       if (e.subtype || e.bot_id || !e.thread_ts || !e.user) return;
-      const teamId = (body as { team_id?: string }).team_id ?? '';
-      const threadKey = buildThreadKey({ teamId, channelId: e.channel, threadTs: e.thread_ts });
-      if (!(await this.registry.get(threadKey))) return;
-      await this.dispatch(teamId, e);
+      try {
+        const teamId = (body as { team_id?: string }).team_id ?? '';
+        const threadKey = buildThreadKey({ teamId, channelId: e.channel, threadTs: e.thread_ts });
+        if (!(await this.registry.get(threadKey))) return;
+        await this.dispatch(teamId, e);
+      } catch (err) {
+        this.log.error({ err, channel: e.channel, ts: e.ts }, 'message event handling failed');
+      }
     });
   }
 
