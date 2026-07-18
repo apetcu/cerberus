@@ -75,4 +75,26 @@ describe('Reconciler', () => {
     expect(result.stoppedUnknown).toBe(1);
     expect(stopped).toEqual(['cerberus-agent-bad']);
   });
+
+  it('leaves already-linked running rows untouched', async () => {
+    const registry = new MemoryThreadRegistry();
+    await registry.upsertActivity({
+      threadKey: 'T1-C1-5.5', teamId: 'T1', channelId: 'C1', threadTs: '5.5',
+      runtime: 'docker', workspacePath: '/workspaces/T1-C1-5.5',
+    });
+    const h = liveHandle('T1-C1-5.5');
+    await registry.setStatus('T1-C1-5.5', 'running', { containerId: h.id, containerName: h.name });
+    const { runtime } = makeRuntime([h]);
+    const result = await new Reconciler({ registry, runtime, log }, cfg).reconcile();
+    expect(result).toEqual({ orphanedRows: 0, adopted: 0, stoppedUnknown: 0 });
+  });
+
+  it('propagates registry failures instead of stopping healthy containers', async () => {
+    const registry = new MemoryThreadRegistry();
+    registry.setStatus = async () => { throw new Error('db down'); };
+    const h = liveHandle('T1-C1-5.5');
+    const { runtime, stopped } = makeRuntime([h]);
+    await expect(new Reconciler({ registry, runtime, log }, cfg).reconcile()).rejects.toThrow('db down');
+    expect(stopped).toEqual([]);
+  });
 });

@@ -44,26 +44,28 @@ export class Reconciler {
     for (const handle of liveByKey.values()) {
       const rec = await registry.get(handle.threadKey);
       if (rec?.status === 'running' && rec.containerName === handle.name) continue;
+      let parts;
       try {
-        const parts = parseThreadKey(handle.threadKey);
-        if (!rec) {
-          await registry.upsertActivity({
-            threadKey: handle.threadKey,
-            ...parts,
-            runtime: this.cfg.runtime,
-            workspacePath: join(this.cfg.workspacesRoot, handle.threadKey),
-          });
-        }
-        await registry.setStatus(handle.threadKey, 'running', {
-          containerId: handle.id, containerName: handle.name,
-        });
-        result.adopted += 1;
-        log.info({ threadKey: handle.threadKey }, 'reconciler: adopted live container');
+        parts = parseThreadKey(handle.threadKey);
       } catch (err) {
         await runtime.stop(handle, false);
         result.stoppedUnknown += 1;
         log.warn({ err, container: handle.name }, 'reconciler: stopped unidentifiable container');
+        continue;
       }
+      if (!rec) {
+        await registry.upsertActivity({
+          threadKey: handle.threadKey,
+          ...parts,
+          runtime: this.cfg.runtime,
+          workspacePath: join(this.cfg.workspacesRoot, handle.threadKey),
+        });
+      }
+      await registry.setStatus(handle.threadKey, 'running', {
+        containerId: handle.id, containerName: handle.name,
+      });
+      result.adopted += 1;
+      log.info({ threadKey: handle.threadKey }, 'reconciler: adopted live container');
     }
     return result;
   }
