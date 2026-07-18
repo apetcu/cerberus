@@ -29,12 +29,16 @@ describe('capabilitiesSchema', () => {
 
 describe('ws envelopes', () => {
   it('parses subscribe/unsubscribe from clients', () => {
-    expect(clientMessageSchema.parse({ type: 'subscribe', channel: 'overview' }).channel).toBe('overview');
+    // Compare whole objects: `.channel` is absent on the `ping` member of the union.
+    expect(clientMessageSchema.parse({ type: 'subscribe', channel: 'overview' }))
+      .toEqual({ type: 'subscribe', channel: 'overview' });
     expect(clientMessageSchema.parse({ type: 'unsubscribe', channel: 'logs:k' }).type).toBe('unsubscribe');
     expect(() => clientMessageSchema.parse({ type: 'evil', channel: 'x' })).toThrow();
   });
 
   it('parses server messages', () => {
+    expect(serverMessageSchema.parse({ type: 'log', channel: 'logs:k', line: 'hello' }))
+      .toEqual({ type: 'log', channel: 'logs:k', line: 'hello' });
     const log = serverMessageSchema.parse({ type: 'log', channel: 'logs:k', line: 'hello' });
     expect(log.type).toBe('log');
     const err = serverMessageSchema.parse({ type: 'error', message: 'nope' });
