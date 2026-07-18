@@ -61,17 +61,22 @@ export class MailboxConsumer {
   }
 
   private async processEntry(entryId: string, fields: string[]): Promise<'processed' | 'shutdown'> {
-    let result: 'processed' | 'shutdown' = 'processed';
+    let msg: AgentInbound;
     try {
-      const msg = decodeInbound(fields);
-      if (msg.kind === 'control') {
-        if (msg.control === 'shutdown') result = 'shutdown';
-      } else {
-        await this.handleUserMessage(msg);
-      }
+      msg = decodeInbound(fields);
     } catch (err) {
       // Malformed payload: ack and drop — retrying can never succeed.
       this.log.error(`dropping malformed mailbox entry ${entryId}: ${String(err)}`);
+      await this.redis.xack(this.key, GROUP, entryId);
+      return 'processed';
+    }
+    let result: 'processed' | 'shutdown' = 'processed';
+    if (msg.kind === 'control') {
+      if (msg.control === 'shutdown') result = 'shutdown';
+    } else {
+      // Processing errors propagate: the entry stays unacked and is replayed by
+      // drainPending() after the container restarts (crash mid-message → redelivery).
+      await this.handleUserMessage(msg);
     }
     await this.redis.xack(this.key, GROUP, entryId);
     return result;

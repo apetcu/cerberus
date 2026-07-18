@@ -6,11 +6,13 @@ import { encodePayload, mailboxKey, OUTBOX_STREAM, type AgentInbound } from '@ce
 import { MailboxConsumer, type StreamsClient } from '../src/consumer.js';
 import { StubBrain } from '../src/brain/stub-brain.js';
 import { WorkspaceStore } from '../src/workspace.js';
+import type { Brain } from '../src/brain/brain.js';
 
 const KEY = 'T1-C1-1.2';
 
 class FakeRedis implements StreamsClient {
   queue: [string, string[]][] = [];
+  pending: [string, string[]][] = [];
   added: { stream: string; payload: string }[] = [];
   acked: string[] = [];
   groups: string[] = [];
@@ -19,13 +21,19 @@ class FakeRedis implements StreamsClient {
   push(msg: AgentInbound): void {
     this.queue.push([`${++this.seq}-0`, encodePayload(msg)]);
   }
+  pendingPush(msg: AgentInbound): void {
+    this.pending.push([`p${++this.seq}-0`, encodePayload(msg)]);
+  }
   async xgroup(...args: (string | number)[]): Promise<unknown> {
     this.groups.push(args.join(' '));
     return 'OK';
   }
   async xreadgroup(...args: (string | number)[]): Promise<unknown> {
-    // supports both the '>' (new) and '0' (pending) forms; pending is always empty here
-    if (args[args.length - 1] === '0') return [[mailboxKey(KEY), []]];
+    // supports both the '>' (new) and '0' (pending) forms
+    if (args[args.length - 1] === '0') {
+      const batch = this.pending.splice(0, 10);
+      return [[mailboxKey(KEY), batch]];
+    }
     const entry = this.queue.shift();
     return entry ? [[mailboxKey(KEY), [entry]]] : null;
   }
@@ -86,5 +94,24 @@ describe('MailboxConsumer', () => {
     redis.push({ id: 'c1', threadKey: KEY, kind: 'control', control: 'shutdown', ts: '0' });
     await consumer.run(new AbortController().signal);
     expect(redis.acked.length).toBe(2);
+    expect(redis.groups[0]).toBe(`CREATE ${mailboxKey(KEY)} agent 0 MKSTREAM`);
+  });
+
+  it('leaves entry unacked and propagates when the brain throws', async () => {
+    const brain: Brain = {
+      async *process() { throw new Error('brain boom'); },
+    };
+    const failing = new MailboxConsumer(redis, brain, new WorkspaceStore(root), KEY, root);
+    redis.push(userMsg('m1', 'hello'));
+    await expect(failing.runOnce(1)).rejects.toThrow('brain boom');
+    expect(redis.acked).toEqual([]);
+  });
+
+  it('drainPending replays pending entries and honors shutdown', async () => {
+    redis.pendingPush(userMsg('p1', 'old message'));
+    redis.pendingPush({ id: 'c1', threadKey: KEY, kind: 'control', control: 'shutdown', ts: '0' });
+    await consumer.run(new AbortController().signal);
+    expect(redis.acked).toHaveLength(2);
+    expect(redis.added.map((a) => a.stream)).toEqual([OUTBOX_STREAM, OUTBOX_STREAM]);
   });
 });
