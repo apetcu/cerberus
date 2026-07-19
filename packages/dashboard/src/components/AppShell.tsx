@@ -1,10 +1,15 @@
 import type { ReactNode } from 'react';
 import { ConnectionBadge } from './ConnectionBadge';
 
-export function AppShell({ title, subtitle, actions, children }: {
+export type ConsoleView = 'agents' | 'activity' | 'system';
+
+export function AppShell({ title, subtitle, actions, view, onNavigate, counts, children }: {
   title: string;
   subtitle?: string;
   actions?: ReactNode;
+  view: ConsoleView;
+  onNavigate: (view: ConsoleView) => void;
+  counts?: Partial<Record<ConsoleView, number>>;
   children: ReactNode;
 }) {
   return (
@@ -16,7 +21,23 @@ export function AppShell({ title, subtitle, actions, children }: {
         </div>
         <div className="mt-8 label">Fleet</div>
         <nav className="mt-2 space-y-1 text-sm">
-          <span className="block rounded-md bg-raised px-2 py-1.5 text-ink">Agents</span>
+          {(['agents', 'activity', 'system'] as const).map((item) => (
+            <button
+              key={item}
+              onClick={() => onNavigate(item)}
+              aria-current={view === item ? 'page' : undefined}
+              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 capitalize transition ${
+                view === item ? 'bg-raised text-ink' : 'text-muted hover:bg-raised/60 hover:text-ink'
+              }`}
+            >
+              <span>{item}</span>
+              {counts?.[item] !== undefined && (
+                <span className="rounded-full bg-line px-1.5 text-[11px] tabular-nums text-muted">
+                  {counts[item]}
+                </span>
+              )}
+            </button>
+          ))}
         </nav>
         <div className="mt-auto space-y-1 text-xs text-dim">
           <a className="block hover:text-muted" href="/metrics">Metrics</a>

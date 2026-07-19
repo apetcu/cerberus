@@ -1,4 +1,4 @@
-import { capabilitiesSchema, type Capabilities } from '@cerberus/protocol';
+import { capabilitiesSchema, type Capabilities, type SystemInfo } from '@cerberus/protocol';
 
 function authHeaders(): HeadersInit {
   const token = new URLSearchParams(location.search).get('token');
@@ -26,4 +26,9 @@ export const api = {
     request<{ stopped: boolean }>(`/api/threads/${encodeURIComponent(threadKey)}/stop`, { method: 'POST' }),
   restartAgent: (threadKey: string) =>
     request<{ outcome: string }>(`/api/threads/${encodeURIComponent(threadKey)}/restart`, { method: 'POST' }),
+  getSystem: () => request<SystemInfo>('/api/system'),
+  setDrain: (enabled: boolean) =>
+    request<{ enabled: boolean; since: string | null }>('/api/system/drain', {
+      method: 'POST', body: JSON.stringify({ enabled }),
+    }),
 };
