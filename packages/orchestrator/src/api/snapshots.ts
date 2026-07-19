@@ -22,6 +22,22 @@ export interface SnapshotDeps {
 }
 
 const MAX_AGENTS = 200;
+const REDIS_TIMEOUT_MS = 3000;
+
+/**
+ * Bounds one dashboard read. The Redis client deliberately has no global commandTimeout
+ * (that would kill the outbox consumer's blocking XREADGROUP), so a stalled connection is
+ * contained here instead: the field degrades to its fallback rather than hanging the snapshot.
+ */
+function withTimeout<T>(promise: Promise<T>, fallback: T, ms = REDIS_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(fallback); },
+    );
+  });
+}
 
 export class SnapshotBuilder {
   constructor(private readonly deps: SnapshotDeps) {}
@@ -97,8 +113,8 @@ export class SnapshotBuilder {
 
   private async summarize(record: ThreadRecord, live: Map<string, AgentHandle>): Promise<AgentSummary> {
     const [mailboxDepth, heartbeat] = await Promise.all([
-      this.deps.redis.xlen(mailboxKey(record.threadKey)).catch(() => 0),
-      this.deps.redis.exists(heartbeatKey(record.threadKey)).catch(() => 0),
+      withTimeout(this.deps.redis.xlen(mailboxKey(record.threadKey)), 0),
+      withTimeout(this.deps.redis.exists(heartbeatKey(record.threadKey)), 0),
     ]);
     return {
       threadKey: record.threadKey,

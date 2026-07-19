@@ -13,9 +13,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/workspaces
-    # Console + health + metrics. Loopback-only: the console has the orchestrator's
-    # privileges. Set DASHBOARD_TOKEN before exposing this beyond localhost.
-    ports: ["127.0.0.1:8080:8080"]
+    # Console + health + metrics. This port carries the orchestrator's own privileges
+    # (stop/restart containers, read every thread's conversation), so set DASHBOARD_TOKEN
+    # on any host that other people can reach.
+    # Not loopback-scoped: OrbStack's forwarder resets connections on a 127.0.0.1-bound
+    # publish, which makes the console unreachable from the browser.
+    ports: ["8080:8080"]
     networks: [control, agents]
     restart: unless-stopped
     depends_on:

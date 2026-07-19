@@ -41,8 +41,10 @@ function makeRuntime(cfg: Config): AgentRuntime {
 
 export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Promise<void>; shutdown(): Promise<void> }> {
   const pool = new pg.Pool({ connectionString: cfg.DATABASE_URL });
-  // commandTimeout: a stalled Redis command must not hang dashboard snapshots forever.
-  const redisRaw = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null, commandTimeout: 5000 });
+  // No global commandTimeout: the outbox consumer's XREADGROUP legitimately blocks for
+  // seconds, and a client-wide deadline kills it every cycle. Dashboard reads are bounded
+  // individually in SnapshotBuilder instead, where a stall must degrade one field only.
+  const redisRaw = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null });
   const redis = redisRaw as unknown as StreamsClient;
   const metrics = new Metrics();
   const events = new EventBus();
