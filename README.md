@@ -58,7 +58,11 @@ With the stack running, open `http://localhost:8080` in a browser for a live mon
 2. **Agent detail** — thread identity, container info, a lifecycle timeline, the conversation history, and a capabilities panel (mocked: stored and displayed, not yet enforced by the runtime), plus stop/restart controls that act on the real container.
 3. **Log drawer** — raw, auto-scrolling container logs for the selected agent, with pause/resume, a substring filter, and a tail-size selector.
 
-Data is pushed live over a `/api/stream` WebSocket (with a REST fallback under `/api/*`); `/healthz`, `/readyz`, and `/metrics` are unaffected.
+Data is pushed live over a `/api/stream` WebSocket (with a REST fallback under `/api/*`); `/healthz`, `/readyz`, and `/metrics` are matched before the console's SPA fallback, so probes and scrapes are never shadowed by it.
+
+Updates arrive two ways: lifecycle events (spawn, reap, message routed) push a fresh snapshot within ~100ms, and a 2-second reconcile tick catches state the orchestrator emits no event for — a container dying on its own, mailbox depth, an expired heartbeat. Log lines are batched before being sent so a chatty agent cannot flood the socket.
+
+Note on capabilities: the panel is a **configuration preview**. Values persist to Postgres and survive reloads, but the runtime does not read them yet — the UI says so on the panel itself. When a real agent brain replaces the stub, the supervisor will read this table when building the container spec.
 
 Configuration:
 
@@ -141,7 +145,17 @@ pnpm test:integration
 pnpm test --watch
 ```
 
-Tests use vitest with in-memory fakes of every external dependency (Redis, Postgres, Docker). Integration tests use testcontainers to spin up real services.
+Tests use vitest with in-memory fakes of every external dependency (Redis, Postgres, Docker). Integration tests use testcontainers to spin up real services, and the Docker log-streaming and runtime tests drive a real daemon.
+
+The console's server side (snapshot building, WebSocket hub, REST routes, auth, log-stream teardown) is covered by the unit suite. The browser code has no test harness by design — its behavior is verified by driving the running console against a live stack.
+
+```bash
+# Build the console bundle (the orchestrator serves it from packages/dashboard/dist)
+pnpm build:dashboard
+
+# Develop the console against a running orchestrator, with hot reload
+pnpm --filter @cerberus/dashboard dev
+```
 
 ### Build and image verification
 
@@ -186,6 +200,9 @@ Environment variables (loaded from `deploy/.env` in production):
 | `MAX_CONCURRENT_AGENTS` | `50` | Backpressure cap; new threads queue if exceeded |
 | `WORKSPACES_ROOT` | `/workspaces` | Mounted path where agent workspaces live |
 | `WORKSPACES_HOST_ROOT` | — | Host path prefix for Docker bind mounts |
+| `DASHBOARD_ENABLED` | `true` | Set to `false` to disable the console; health/metrics keep working |
+| `DASHBOARD_TOKEN` | — | When set, REST needs `Authorization: Bearer <token>` and the console URL needs `?token=<token>` |
+| `DASHBOARD_DIST` | — | Override the built dashboard directory; defaults to `packages/dashboard/dist` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Project structure
@@ -193,15 +210,19 @@ Environment variables (loaded from `deploy/.env` in production):
 ```
 cerberus/
   packages/
-    protocol/          # Shared types and schemas for agent communication
-    orchestrator/      # Slack gateway, registry, runtime, lifecycle
+    protocol/          # Shared types and schemas: agent messages + console wire types
+    orchestrator/      # Slack gateway, registry, runtime, lifecycle, console API
+      src/api/         #   REST routes, static serving, WebSocket hub, snapshots, event bus
     agent/             # Agent container entry point
+    dashboard/         # Cerberus Console (React + Vite + Tailwind, dark ops theme)
   deploy/
     docker-compose.yml # Local dev stack
+    k8s/               # Kubernetes manifests (RBAC, NetworkPolicy, PVC)
     redis/users.acl    # Redis ACL for multi-user isolation
     .env.example       # Environment variable template
   docs/superpowers/specs/
-    2026-07-18-cerberus-design.md  # Detailed architecture
+    2026-07-18-cerberus-design.md          # Orchestrator architecture
+    2026-07-19-cerberus-console-design.md  # Console architecture
   spec.md              # Original requirements
 ```
 
