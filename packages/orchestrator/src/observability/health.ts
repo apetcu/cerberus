@@ -21,24 +21,32 @@ export async function startHealthServer(
 ): Promise<{ close(): Promise<void>; port: number }> {
   const server = createServer(async (req, res) => {
     try {
-      for (const handler of opts.handlers ?? []) {
-        if (await handler(req, res)) return;
-      }
+      // Operational endpoints are matched before opts.handlers: the dashboard's SPA
+      // catch-all answers every GET, and must never shadow a health probe or the
+      // metrics scrape.
       if (req.url === '/healthz') {
         res.writeHead(200).end('ok');
-      } else if (req.url === '/readyz') {
+        return;
+      }
+      if (req.url === '/readyz') {
         const failures: string[] = [];
         for (const [name, check] of Object.entries(opts.checks)) {
           try { await check(); } catch { failures.push(name); }
         }
         if (failures.length === 0) res.writeHead(200).end('ready');
         else res.writeHead(503).end(`not ready: ${failures.join(', ')}`);
-      } else if (req.url === '/metrics') {
+        return;
+      }
+      if (req.url === '/metrics') {
         res.writeHead(200, { 'content-type': opts.metrics.registry.contentType });
         res.end(await opts.metrics.registry.metrics());
-      } else {
-        res.writeHead(404).end();
+        return;
       }
+
+      for (const handler of opts.handlers ?? []) {
+        if (await handler(req, res)) return;
+      }
+      res.writeHead(404).end();
     } catch (err) {
       opts.log.error({ err }, 'health endpoint error');
       res.writeHead(500).end();

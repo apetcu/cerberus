@@ -140,6 +140,9 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       if (sampler) clearInterval(sampler);
       await outboxDone?.catch(() => {});
       hub.stop();
+      // wss.close() only stops new upgrades; already-connected dashboards must be
+      // terminated explicitly or they linger with an open socket through shutdown.
+      for (const client of wss.clients) client.terminate();
       wss.close();
       await health?.close();
       redisRaw.disconnect();
