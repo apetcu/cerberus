@@ -66,7 +66,7 @@ export function LogDrawer({ threadKey, onClose }: { threadKey: string; onClose: 
 
         <footer className="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-dim">
           <span>{visible.length} lines{filter && ` (filtered from ${lines.length})`}</span>
-          {paused && <span className="text-warn">paused — buffering</span>}
+          {paused && <span className="text-warn">paused, buffering</span>}
         </footer>
       </section>
     </div>

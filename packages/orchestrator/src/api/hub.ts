@@ -269,7 +269,7 @@ export class DashboardHub {
     try {
       const current = await this.deps.runtime.inspect(handle.name);
       if (!current) return 'container was removed';
-      if (!current.running) return 'container exited — restart the agent to resume streaming';
+      if (!current.running) return 'container exited; restart the agent to resume streaming';
     } catch (err) {
       this.deps.log.warn({ err, container: handle.name }, 'could not determine why the log stream ended');
     }

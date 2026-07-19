@@ -21,7 +21,7 @@ export default function App() {
   return (
     <AppShell
       title="Agents"
-      subtitle={data ? `${data.runtime} runtime${data.runtimeHealthy ? '' : ' — unreachable'}` : 'connecting…'}
+      subtitle={data ? `${data.runtime} runtime${data.runtimeHealthy ? '' : ' (unreachable)'}` : 'connecting…'}
     >
       {!data ? (
         <div className="text-sm text-dim">Loading fleet…</div>

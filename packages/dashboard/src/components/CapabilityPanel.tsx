@@ -41,7 +41,7 @@ export function CapabilityPanel({ threadKey, initial }: { threadKey: string; ini
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-warn/30 bg-warn/10 px-4 py-2 text-xs text-warn">
-        Configuration preview — stored for later, not yet enforced by the runtime.
+        Configuration preview: stored for later, not yet enforced by the runtime.
       </div>
 
       <section className="rounded-lg border border-line bg-surface p-4">
