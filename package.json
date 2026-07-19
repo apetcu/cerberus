@@ -8,7 +8,8 @@
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "build:agent-image": "docker build -f packages/agent/Dockerfile -t cerberus-agent:dev .",
-    "build:orchestrator-image": "docker build -f packages/orchestrator/Dockerfile -t cerberus-orchestrator:dev ."
+    "build:orchestrator-image": "docker build -f packages/orchestrator/Dockerfile -t cerberus-orchestrator:dev .",
+    "build:dashboard": "pnpm --filter @cerberus/dashboard build"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

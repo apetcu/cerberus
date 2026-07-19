@@ -26,6 +26,10 @@ const schema = z.object({
   K8S_WORKSPACE_PVC: z.string().default('cerberus-workspaces'),
   HEALTH_PORT: z.coerce.number().int().default(8080),
   LOG_LEVEL: z.string().default('info'),
+  // NOT z.coerce.boolean(): it parses the string "false" as true (non-empty string).
+  DASHBOARD_ENABLED: z.string().default('true').transform((v) => v !== 'false'),
+  DASHBOARD_TOKEN: z.string().default(''),
+  DASHBOARD_DIST: z.string().default(''),   // '' resolves to packages/dashboard/dist
 });
 
 export type Config = z.infer<typeof schema>;

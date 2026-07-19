@@ -50,6 +50,25 @@ Cerberus gives every Slack thread its own isolated agent container, managed by a
    - **Metrics:** `curl http://localhost:8080/metrics` shows `cerberus_active_agents` and other observability data.
    - **Idle timeout:** Containers stop after 30 minutes of inactivity and are transparently recreated on the next message.
 
+## Console
+
+With the stack running, open `http://localhost:8080` in a browser for a live monitoring dashboard of the whole fleet. It has three screens:
+
+1. **Overview** — a stat strip (active agents, threads today, messages in/out, reaped) above a grid of agent cards, each showing thread identity, status, uptime, message count, and a heartbeat dot that goes hollow when the agent's heartbeat goes stale.
+2. **Agent detail** — thread identity, container info, a lifecycle timeline, the conversation history, and a capabilities panel (mocked: stored and displayed, not yet enforced by the runtime), plus stop/restart controls that act on the real container.
+3. **Log drawer** — raw, auto-scrolling container logs for the selected agent, with pause/resume, a substring filter, and a tail-size selector.
+
+Data is pushed live over a `/api/stream` WebSocket (with a REST fallback under `/api/*`); `/healthz`, `/readyz`, and `/metrics` are unaffected.
+
+Configuration:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `DASHBOARD_ENABLED` | `true` | Set to `false` to disable the console entirely; health/metrics endpoints still work |
+| `DASHBOARD_TOKEN` | `` (empty) | When set, REST requires `Authorization: Bearer <token>` and the WebSocket requires `?token=<token>`; when empty, the console is open to anyone who can reach the port |
+
+**Security note:** the console inherits the orchestrator's own privileges — it can stop/restart containers and read every thread's conversation. `docker-compose.yml` binds it to `127.0.0.1` by default; set `DASHBOARD_TOKEN` before exposing it beyond localhost. Log access equals conversation access: anything visible in the log drawer is already visible to anyone who can read the corresponding Slack channel.
+
 ## Architecture
 
 Cerberus implements an **actor model** for Slack conversations:

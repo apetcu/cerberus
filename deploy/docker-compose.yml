@@ -13,7 +13,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/workspaces
-    ports: ["8080:8080"]
+    # Console + health + metrics. Loopback-only: the console has the orchestrator's
+    # privileges. Set DASHBOARD_TOKEN before exposing this beyond localhost.
+    ports: ["127.0.0.1:8080:8080"]
     networks: [control, agents]
     restart: unless-stopped
     depends_on:
