@@ -124,8 +124,8 @@ export function SystemView() {
           {info.drain.enabled ? 'Resume spawning' : 'Drain the fleet'}
         </button>
         <span className="text-xs text-dim">
-          Draining pauses new agent spawns without stopping running ones. Queued threads start again
-          on their next message after you resume.
+          Draining pauses new agent spawns without stopping running ones. Queued threads are picked up
+          automatically when you resume.
         </span>
       </div>
     </div>

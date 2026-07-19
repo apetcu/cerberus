@@ -7,6 +7,7 @@
 export class DrainState {
   private draining = false;
   private startedAt: string | null = null;
+  private readonly resumeListeners = new Set<() => void>();
 
   get enabled(): boolean {
     return this.draining;
@@ -20,5 +21,14 @@ export class DrainState {
     if (enabled === this.draining) return; // keep the original timestamp
     this.draining = enabled;
     this.startedAt = enabled ? new Date().toISOString() : null;
+    if (!enabled) {
+      for (const fn of this.resumeListeners) fn();
+    }
+  }
+
+  /** Fires only on a real transition from draining to resumed, never on every set(false). */
+  onResume(fn: () => void): () => void {
+    this.resumeListeners.add(fn);
+    return () => this.resumeListeners.delete(fn);
   }
 }
