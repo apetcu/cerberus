@@ -35,6 +35,8 @@ export class ActivityLog {
 
   /** Newest first, so the UI renders without re-sorting. */
   recent(limit = this.capacity): ActivityEvent[] {
+    // Guard zero explicitly: slice(-0) is slice(0) and would return the whole buffer.
+    if (limit <= 0) return [];
     return this.buffer.slice(-limit).reverse();
   }
 
