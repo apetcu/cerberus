@@ -58,4 +58,23 @@ describe('ActivityLog', () => {
     bus.publish(evt('k1'));
     expect(log.recent()).toEqual([]);
   });
+
+  it('copies cause through for agent_died and bytes through for workspace_evicted', () => {
+    const bus = new EventBus();
+    const log = new ActivityLog(bus);
+    bus.publish({ kind: 'agent_died', threadKey: 'k1', at: new Date().toISOString(), cause: 'heartbeat_stale' });
+    bus.publish({ kind: 'workspace_evicted', threadKey: 'k2', at: new Date().toISOString(), bytes: 4096 });
+    const [evicted, died] = log.recent();
+    expect(died).toMatchObject({ kind: 'agent_died', threadKey: 'k1', cause: 'heartbeat_stale' });
+    expect(evicted).toMatchObject({ kind: 'workspace_evicted', threadKey: 'k2', bytes: 4096 });
+  });
+
+  it('leaves cause and bytes undefined for kinds that carry neither', () => {
+    const bus = new EventBus();
+    const log = new ActivityLog(bus);
+    bus.publish(evt('k1'));
+    const [entry] = log.recent();
+    expect(entry!.cause).toBeUndefined();
+    expect(entry!.bytes).toBeUndefined();
+  });
 });

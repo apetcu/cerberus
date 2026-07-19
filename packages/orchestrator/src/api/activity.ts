@@ -20,6 +20,7 @@ export class ActivityLog {
     this.unsubscribe = events.onEvent((event) => {
       const entry: ActivityEvent = {
         id: ulid(), kind: event.kind, threadKey: event.threadKey, at: event.at,
+        cause: event.cause, bytes: event.bytes,
       };
       this.buffer.push(entry);
       if (this.buffer.length > this.capacity) this.buffer.shift();

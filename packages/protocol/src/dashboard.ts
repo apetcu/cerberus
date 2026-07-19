@@ -93,6 +93,8 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('activity'),
     events: z.array(z.object({
       id: z.string(), kind: z.string(), threadKey: z.string(), at: z.string(),
+      cause: z.enum(['container_gone', 'container_exited', 'heartbeat_stale']).optional(),
+      bytes: z.number().optional(),
     })),
   }),
   z.object({ type: z.literal('error'), channel: z.string().optional(), message: z.string() }),
@@ -103,7 +105,8 @@ export type ServerMessage = z.infer<typeof serverMessageSchema>;
 export const ACTIVITY_CHANNEL = 'activity';
 
 export type ActivityKind =
-  | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted';
+  | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted'
+  | 'agent_died' | 'workspace_evicted';
 
 export interface ActivityEvent {
   /** ULID, stable key for the UI. */
@@ -112,7 +115,27 @@ export interface ActivityEvent {
   threadKey: string;
   /** ISO-8601 */
   at: string;
+  /** Present only when kind is 'agent_died'. */
+  cause?: 'container_gone' | 'container_exited' | 'heartbeat_stale';
+  /** Present only when kind is 'workspace_evicted'. */
+  bytes?: number;
 }
+
+/** Aggregate disk usage across every thread workspace, as sized by WorkspaceGC. */
+export interface WorkspaceUsage {
+  totalBytes: number;
+  capBytes: number;
+  count: number;
+  /** ISO-8601, or null when there are no workspaces. */
+  oldestTouchedAt: string | null;
+}
+
+export const workspaceUsageSchema = z.object({
+  totalBytes: z.number().int().nonnegative(),
+  capBytes: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  oldestTouchedAt: z.string().nullable(),
+}).strict();
 
 export interface SystemInfo {
   runtime: 'docker' | 'k8s';
@@ -121,6 +144,11 @@ export interface SystemInfo {
   config: {
     idleTimeoutMs: number;
     reaperIntervalMs: number;
+    livenessIntervalMs: number;
+    heartbeatGraceMs: number;
+    sweepIntervalMs: number;
+    workspaceGcIntervalMs: number;
+    workspacesMaxMb: number;
     maxConcurrentAgents: number;
     agentCpu: number;
     agentMemoryMb: number;
@@ -140,4 +168,5 @@ export interface SystemInfo {
   };
   dependencies: { redis: 'ok' | 'error'; postgres: 'ok' | 'error'; runtime: 'ok' | 'error' };
   drain: { enabled: boolean; since: string | null };
+  workspaces: WorkspaceUsage;
 }

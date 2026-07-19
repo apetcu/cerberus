@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DrainState } from '../src/lifecycle/drain.js';
 
 describe('DrainState', () => {
@@ -24,5 +24,32 @@ describe('DrainState', () => {
     const first = drain.since;
     drain.set(true);
     expect(drain.since).toBe(first);
+  });
+
+  it('fires onResume listeners on a true transition from enabled to disabled', () => {
+    const drain = new DrainState();
+    drain.set(true);
+    const fn = vi.fn();
+    drain.onResume(fn);
+    drain.set(false);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire onResume when already disabled', () => {
+    const drain = new DrainState();
+    const fn = vi.fn();
+    drain.onResume(fn);
+    drain.set(false);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('unsubscribe stops delivery', () => {
+    const drain = new DrainState();
+    drain.set(true);
+    const fn = vi.fn();
+    const unsubscribe = drain.onResume(fn);
+    unsubscribe();
+    drain.set(false);
+    expect(fn).not.toHaveBeenCalled();
   });
 });

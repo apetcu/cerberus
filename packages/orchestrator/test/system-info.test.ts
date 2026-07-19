@@ -11,11 +11,14 @@ const SECRETS = {
   DASHBOARD_TOKEN: 'SENTINEL-dashboard-token',
 };
 
+const WORKSPACE_USAGE = { totalBytes: 1024, capBytes: 10_737_418_240, count: 2, oldestTouchedAt: '2026-07-19T00:00:00.000Z' };
+
 const deps = () => ({
   cfg: loadConfig({ ...SECRETS }),
   slack: () => ({ connected: true, botUserId: 'U1', botName: 'bot', teamName: 'T', lastEventAt: null }),
   drain: () => ({ enabled: false, since: null }),
   checks: { redis: async () => {}, postgres: async () => {}, runtime: async () => {} },
+  workspaces: async () => ({ ...WORKSPACE_USAGE }),
 });
 
 describe('buildSystemInfo', () => {
@@ -40,5 +43,21 @@ describe('buildSystemInfo', () => {
     const info = await buildSystemInfo(d);
     expect(info.dependencies).toEqual({ redis: 'ok', postgres: 'error', runtime: 'ok' });
     expect(info.runtime).toBe('docker');
+  });
+
+  it('reports the workspace usage block from the injected dep', async () => {
+    const info = await buildSystemInfo(deps());
+    expect(info.workspaces).toEqual(WORKSPACE_USAGE);
+  });
+
+  it('carries the five operational-loop config values, all numbers, none secret', async () => {
+    const info = await buildSystemInfo(deps());
+    expect(info.config).toMatchObject({
+      livenessIntervalMs: 15_000,
+      heartbeatGraceMs: 60_000,
+      sweepIntervalMs: 20_000,
+      workspaceGcIntervalMs: 300_000,
+      workspacesMaxMb: 10_240,
+    });
   });
 });

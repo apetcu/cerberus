@@ -1,5 +1,5 @@
 import {
-  decodeInbound, encodePayload, mailboxKey, OUTBOX_STREAM, type AgentInbound,
+  decodeInbound, encodePayload, MAILBOX_GROUP, mailboxKey, OUTBOX_STREAM, type AgentInbound,
 } from '@cerberus/protocol';
 import type { Brain, BrainContext } from './brain/brain.js';
 import type { WorkspaceStore } from './workspace.js';
@@ -11,7 +11,7 @@ export interface StreamsClient {
   xack(key: string, group: string, id: string): Promise<unknown>;
 }
 
-const GROUP = 'agent';
+const GROUP = MAILBOX_GROUP;
 const CONSUMER = 'main';
 type StreamReply = [string, [string, string[]][]][] | null;
 
@@ -68,7 +68,7 @@ export class MailboxConsumer {
     try {
       msg = decodeInbound(fields);
     } catch (err) {
-      // Malformed payload: ack and drop — retrying can never succeed.
+      // Malformed payload: ack and drop, retrying can never succeed.
       this.log.error(`dropping malformed mailbox entry ${entryId}: ${String(err)}`);
       await this.redis.xack(this.key, GROUP, entryId);
       return 'processed';
