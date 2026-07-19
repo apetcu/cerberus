@@ -5,6 +5,7 @@ import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentRuntime, AgentSpec, ResourceLimits } from '../runtime/agent-runtime.js';
 import type { EventBus } from '../api/events.js';
+import type { DrainState } from './drain.js';
 import { KeyedMutex } from './keyed-mutex.js';
 
 const AGENT_UID = 1000; // matches USER node in packages/agent/Dockerfile
@@ -21,7 +22,7 @@ export interface SupervisorConfig {
   limits: ResourceLimits;
 }
 
-export type EnsureOutcome = 'already-running' | 'spawned' | 'deferred' | 'failed';
+export type EnsureOutcome = 'already-running' | 'spawned' | 'deferred' | 'failed' | 'drained';
 
 export interface EnsureParams {
   threadKey: string;
@@ -36,6 +37,7 @@ export interface SupervisorDeps {
   log: Logger;
   ensureDir?: (path: string) => Promise<void>;
   events?: EventBus;
+  drain?: DrainState;
 }
 
 export class ThreadSupervisor {
@@ -66,6 +68,12 @@ export class ThreadSupervisor {
     if (record.status === 'running' && record.containerName) {
       const live = await runtime.inspect(record.containerName);
       if (live?.running) return { record, outcome: 'already-running' };
+    }
+
+    if (this.deps.drain?.enabled) {
+      // Deploys pause spawning fleet-wide. The message is already in the mailbox, so it is
+      // processed once draining ends rather than lost.
+      return { record, outcome: 'drained' };
     }
 
     if ((await registry.countByStatus('running')) >= this.cfg.maxConcurrentAgents) {

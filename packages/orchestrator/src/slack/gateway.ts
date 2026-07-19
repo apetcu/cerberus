@@ -15,8 +15,19 @@ interface SlackMessageEvent {
   user?: string; bot_id?: string; subtype?: string;
 }
 
+export interface SlackStatus {
+  connected: boolean;
+  botUserId: string | null;
+  botName: string | null;
+  teamName: string | null;
+  lastEventAt: string | null;
+}
+
 export class SlackGateway implements SlackPoster {
   private readonly app: bolt.App;
+  private status: SlackStatus = {
+    connected: false, botUserId: null, botName: null, teamName: null, lastEventAt: null,
+  };
 
   constructor(
     cfg: { botToken: string; appToken: string },
@@ -33,12 +44,17 @@ export class SlackGateway implements SlackPoster {
     });
 
     this.app.event('app_mention', async ({ event, body }) => {
+      this.status.lastEventAt = new Date().toISOString();
       const e = event as unknown as SlackMessageEvent;
       await this.dispatch((body as { team_id?: string }).team_id ?? '', e);
     });
 
     // Thread replies (no mention needed) — only for threads we already own.
     this.app.event('message', async ({ event, body }) => {
+      // Stamped before filtering: lastEventAt is a liveness signal for the socket, so an
+      // event we deliberately ignore still proves Slack is delivering. Stamping only routed
+      // events would make a healthy connection look dead during unrelated channel traffic.
+      this.status.lastEventAt = new Date().toISOString();
       const e = event as unknown as SlackMessageEvent;
       if (e.subtype || e.bot_id || !e.thread_ts || !e.user) return;
       try {
@@ -53,6 +69,7 @@ export class SlackGateway implements SlackPoster {
   }
 
   private async dispatch(teamId: string, e: SlackMessageEvent): Promise<void> {
+    this.status.lastEventAt = new Date().toISOString();
     if (!this.routerRef.current) return;
     try {
       await this.routerRef.current.handle({
@@ -84,6 +101,26 @@ export class SlackGateway implements SlackPoster {
     await this.app.client.reactions.add({ channel: channelId, timestamp: ts, name: emoji });
   }
 
-  async start(): Promise<void> { await this.app.start(); }
-  async stop(): Promise<void> { await this.app.stop(); }
+  async start(): Promise<void> {
+    await this.app.start();
+    this.status.connected = true;
+    try {
+      const auth = await this.app.client.auth.test();
+      this.status.botUserId = (auth.user_id as string | undefined) ?? null;
+      this.status.botName = (auth.user as string | undefined) ?? null;
+      this.status.teamName = (auth.team as string | undefined) ?? null;
+    } catch (err) {
+      // Identity is a nicety; a failure here must not stop the orchestrator booting.
+      this.log.warn({ err }, 'could not resolve slack identity');
+    }
+  }
+
+  getStatus(): SlackStatus {
+    return { ...this.status };
+  }
+
+  async stop(): Promise<void> {
+    this.status.connected = false;
+    await this.app.stop();
+  }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { serverMessageSchema, type ServerMessage } from '@cerberus/protocol';
+import { ACTIVITY_CHANNEL, serverMessageSchema, type ActivityEvent, type ServerMessage } from '@cerberus/protocol';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting';
 
@@ -185,4 +185,23 @@ export function useLogChannel(channel: string | null, paused: boolean): LogState
   }, [paused]);
 
   return { lines, ended, clear: () => setLines([]) };
+}
+
+/** Snapshot on subscribe, then one delta per event, newest first, capped like the server. */
+export function useActivityChannel(active: boolean): ActivityEvent[] {
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+
+  useEffect(() => {
+    if (!active) return;
+    setEvents([]);
+    return manager.subscribe(ACTIVITY_CHANNEL, (message) => {
+      if (message.type === 'snapshot' && message.channel === ACTIVITY_CHANNEL) {
+        setEvents((message.data as { events?: ActivityEvent[] }).events ?? []);
+      } else if (message.type === 'activity') {
+        setEvents((prev) => [...(message.events as ActivityEvent[]), ...prev].slice(0, 500));
+      }
+    });
+  }, [active]);
+
+  return events;
 }

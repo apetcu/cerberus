@@ -1,10 +1,11 @@
 import {
-  clientMessageSchema, logsChannel, OVERVIEW_CHANNEL, threadChannel,
+  ACTIVITY_CHANNEL, clientMessageSchema, logsChannel, OVERVIEW_CHANNEL, threadChannel,
   type ServerMessage,
 } from '@cerberus/protocol';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentHandle, AgentRuntime } from '../runtime/agent-runtime.js';
+import type { ActivityLog } from './activity.js';
 import type { EventBus } from './events.js';
 import type { SnapshotBuilder } from './snapshots.js';
 
@@ -18,6 +19,7 @@ export interface HubDeps {
   registry: ThreadRegistry;
   runtime: AgentRuntime;
   events: EventBus;
+  activity: ActivityLog;
   log: Logger;
   tickMs?: number;
   debounceMs?: number;
@@ -41,6 +43,7 @@ export class DashboardHub {
   private timer: NodeJS.Timeout | null = null;
   private debounce: NodeJS.Timeout | null = null;
   private unsubscribeEvents: (() => void) | null = null;
+  private unsubscribeActivity: (() => void) | null = null;
   private flushing = false;
 
   constructor(private readonly deps: HubDeps) {
@@ -51,6 +54,17 @@ export class DashboardHub {
     // remember to invoke start() first. start()/stop() govern only the
     // reconcile-tick timer below.
     this.unsubscribeEvents = this.deps.events.onEvent(() => this.scheduleFlush());
+    this.unsubscribeActivity = this.subscribeActivity();
+  }
+
+  private subscribeActivity(): () => void {
+    return this.deps.activity.onEvent((event) => {
+      for (const client of this.clients) {
+        if (client.channels.has(ACTIVITY_CHANNEL)) {
+          this.send(client, { type: 'activity', events: [event] });
+        }
+      }
+    });
   }
 
   start(): void {
@@ -58,6 +72,7 @@ export class DashboardHub {
     // Re-subscribing here keeps start()/stop() symmetric: stop() unsubscribes, so a
     // restarted hub must re-attach or it would silently lose all event-driven pushes.
     this.unsubscribeEvents ??= this.deps.events.onEvent(() => this.scheduleFlush());
+    this.unsubscribeActivity ??= this.subscribeActivity();
     // Reconcile tick: catches state the orchestrator never emits an event for
     // (a container dying on its own, mailbox depth, heartbeat expiry).
     this.timer = setInterval(() => void this.flush(), this.tickMs);
@@ -75,6 +90,8 @@ export class DashboardHub {
     this.debounce = null;
     this.unsubscribeEvents?.();
     this.unsubscribeEvents = null;
+    this.unsubscribeActivity?.();
+    this.unsubscribeActivity = null;
     for (const client of this.clients) {
       for (const controller of client.logStreams.values()) controller.abort();
       client.logStreams.clear();
@@ -152,7 +169,8 @@ export class DashboardHub {
     try {
       for (const client of this.clients) {
         for (const channel of client.channels) {
-          if (channel.startsWith('logs:')) continue;
+          // Activity is fully event-driven; the tick exists for state that emits no events.
+          if (channel.startsWith('logs:') || channel === ACTIVITY_CHANNEL) continue;
           await this.sendSnapshot(client, channel);
         }
       }
@@ -165,6 +183,10 @@ export class DashboardHub {
     try {
       if (channel === OVERVIEW_CHANNEL) {
         this.send(client, { type: 'snapshot', channel, data: await this.deps.snapshots.overview() });
+        return;
+      }
+      if (channel === ACTIVITY_CHANNEL) {
+        this.send(client, { type: 'snapshot', channel, data: { events: this.deps.activity.recent() } });
         return;
       }
       if (channel.startsWith('thread:')) {

@@ -5,12 +5,15 @@ import { CoreV1Api, KubeConfig } from '@kubernetes/client-node';
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { WebSocketServer } from 'ws';
+import { ActivityLog } from './api/activity.js';
 import { EventBus } from './api/events.js';
 import { DashboardHub, type HubSocket } from './api/hub.js';
 import { createApiHandler, isAuthorized } from './api/routes.js';
 import { SnapshotBuilder } from './api/snapshots.js';
 import { createStaticHandler } from './api/static.js';
+import { buildSystemInfo } from './api/system-info.js';
 import type { Config } from './config.js';
+import { DrainState } from './lifecycle/drain.js';
 import { IdleReaper } from './lifecycle/reaper.js';
 import { Reconciler } from './lifecycle/reconciler.js';
 import { ThreadSupervisor } from './lifecycle/supervisor.js';
@@ -54,11 +57,13 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
   const redisBlocking = redisBlockingRaw as unknown as StreamsClient;
   const metrics = new Metrics();
   const events = new EventBus();
+  const activity = new ActivityLog(events);
+  const drain = new DrainState();
 
   const registry = new PostgresThreadRegistry(pool);
   const runtime = makeRuntime(cfg);
   const producer = new MailboxProducer(redis);
-  const supervisor = new ThreadSupervisor({ registry, runtime, log, events }, {
+  const supervisor = new ThreadSupervisor({ registry, runtime, log, events, drain }, {
     runtime: cfg.RUNTIME, agentImage: cfg.AGENT_IMAGE, agentRedisUrl: cfg.AGENT_REDIS_URL,
     logLevel: cfg.LOG_LEVEL, workspacesRoot: cfg.WORKSPACES_ROOT, workspacesHostRoot: cfg.WORKSPACES_HOST_ROOT,
     maxConcurrentAgents: cfg.MAX_CONCURRENT_AGENTS,
@@ -74,7 +79,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     dedup: new RedisDedupStore(redis), producer, supervisor, poster: gateway, reactor: gateway, log, metrics, events,
   });
 
-  const outbox = new OutboxConsumer(redisBlocking, gateway, new RedisDeliveryGuard(redis), log);
+  const outbox = new OutboxConsumer(redisBlocking, gateway, new RedisDeliveryGuard(redis), log, events);
   const reaper = new IdleReaper({ registry, runtime, producer, log, metrics, events }, cfg.IDLE_TIMEOUT_MS);
   const reconciler = new Reconciler({ registry, runtime, log },
     { runtime: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT });
@@ -84,7 +89,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     registry, runtime, capabilities, redis,
     runtimeName: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT, log,
   });
-  const hub = new DashboardHub({ snapshots, registry, runtime, events, log });
+  const hub = new DashboardHub({ snapshots, registry, runtime, events, activity, log });
   // Client messages are tiny subscribe/unsubscribe envelopes; cap frames so an oversized
   // payload is rejected by ws rather than buffered.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
@@ -96,6 +101,17 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
   let outboxDone: Promise<void> | null = null;
   let sampler: NodeJS.Timeout | null = null;
 
+  const systemInfo = () => buildSystemInfo({
+    cfg,
+    slack: () => gateway.getStatus(),
+    drain: () => ({ enabled: drain.enabled, since: drain.since }),
+    checks: {
+      redis: () => redisRaw.ping(),
+      postgres: () => pool.query('SELECT 1'),
+      runtime: () => runtime.list(),
+    },
+  });
+
   return {
     async start() {
       await migrate(pool, MIGRATIONS_DIR);
@@ -105,6 +121,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
         ? [
             createApiHandler({
               snapshots, capabilities, registry, runtime, supervisor,
+              activity, drain, system: systemInfo, events,
               token: cfg.DASHBOARD_TOKEN, log,
             }),
             createStaticHandler(distDir),
@@ -150,6 +167,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       if (sampler) clearInterval(sampler);
       await outboxDone?.catch(() => {});
       hub.stop();
+      activity.stop();
       // wss.close() only stops new upgrades; already-connected dashboards must be
       // terminated explicitly or they linger with an open socket through shutdown.
       for (const client of wss.clients) client.terminate();

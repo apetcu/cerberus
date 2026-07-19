@@ -1,5 +1,6 @@
 import { decodeOutbound, OUTBOX_STREAM } from '@cerberus/protocol';
 import type { Logger } from '../observability/logger.js';
+import type { EventBus } from '../api/events.js';
 import type { DeliveryGuard, StreamsClient } from './redis-stores.js';
 
 export interface SlackPoster {
@@ -16,6 +17,7 @@ export class OutboxConsumer {
     private readonly poster: SlackPoster,
     private readonly guard: DeliveryGuard,
     private readonly log: Logger,
+    private readonly events?: EventBus,
   ) {}
 
   async ensureGroup(): Promise<void> {
@@ -38,6 +40,9 @@ export class OutboxConsumer {
     try {
       if (await this.guard.claim(decoded.id)) {
         await this.poster.postToThread(decoded.threadKey, decoded.text);
+        this.events?.publish({
+          kind: 'reply_posted', threadKey: decoded.threadKey, at: new Date().toISOString(),
+        });
       }
       await this.redis.xack(OUTBOX_STREAM, GROUP, entryId);
     } catch (err) {

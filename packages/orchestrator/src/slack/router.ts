@@ -63,7 +63,9 @@ export class EventRouter {
     log.info({ threadKey, outcome }, 'inbound message routed');
     events?.publish({ kind: 'message_routed', threadKey, at: new Date().toISOString() });
 
-    if (outcome === 'failed') {
+    if (outcome === 'drained') {
+      await poster.postToThread(threadKey, ':construction: Cerberus is being updated and is not starting new agents. Send another message shortly and I will pick this up.');
+    } else if (outcome === 'failed') {
       await poster.postToThread(threadKey, ':warning: Could not start your agent. I will retry on your next message.');
     } else if (outcome === 'deferred') {
       await poster.postToThread(threadKey, ':hourglass: All agent slots are busy. Your message is queued and will be processed shortly.');

@@ -5,6 +5,7 @@ import {
   agentName, type AgentHandle, type AgentRuntime, type AgentSpec, type LogOptions,
 } from '../src/runtime/agent-runtime.js';
 import { ThreadSupervisor, type SupervisorConfig } from '../src/lifecycle/supervisor.js';
+import { DrainState } from '../src/lifecycle/drain.js';
 
 const log = pino({ level: 'silent' });
 const cfg: SupervisorConfig = {
@@ -35,11 +36,11 @@ class FakeRuntime implements AgentRuntime {
   async *logs(_handle: AgentHandle, _opts: LogOptions): AsyncIterable<string> {}
 }
 
-function make(runtimeOverrides: Partial<FakeRuntime> = {}) {
+function make(runtimeOverrides: Partial<FakeRuntime> = {}, drain?: DrainState) {
   const registry = new MemoryThreadRegistry();
   const runtime = Object.assign(new FakeRuntime(), runtimeOverrides);
   const ensureDir = vi.fn(async () => {});
-  const supervisor = new ThreadSupervisor({ registry, runtime, log, ensureDir }, cfg);
+  const supervisor = new ThreadSupervisor({ registry, runtime, log, ensureDir, drain }, cfg);
   return { registry, runtime, supervisor, ensureDir };
 }
 
@@ -97,5 +98,25 @@ describe('ThreadSupervisor.ensureRunning', () => {
     const rec = (await registry.get(params.threadKey))!;
     expect(rec.status).toBe('failed');
     expect(rec.failureCount).toBe(1);
+  });
+
+  it('returns drained and never spawns while draining', async () => {
+    const drain = new DrainState();
+    drain.set(true);
+    const { runtime, supervisor } = make({}, drain);
+    const res = await supervisor.ensureRunning(params);
+    expect(res.outcome).toBe('drained');
+    expect(runtime.spawned).toHaveLength(0);
+  });
+
+  it('spawns again once draining ends', async () => {
+    const drain = new DrainState();
+    drain.set(true);
+    const { runtime, supervisor } = make({}, drain);
+    await supervisor.ensureRunning(params);
+    drain.set(false);
+    const res = await supervisor.ensureRunning(params);
+    expect(res.outcome).toBe('spawned');
+    expect(runtime.spawned).toHaveLength(1);
   });
 });
