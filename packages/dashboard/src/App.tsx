@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { OVERVIEW_CHANNEL, type OverviewSnapshot } from '@cerberus/protocol';
+import { AgentDetail } from './components/AgentDetail';
 import { AgentGrid } from './components/AgentGrid';
 import { AppShell } from './components/AppShell';
 import { OverviewBar } from './components/OverviewBar';
@@ -7,14 +8,21 @@ import { useChannel } from './lib/ws';
 
 export default function App() {
   const [selected, setSelected] = useState<string | null>(null);
-  const { data } = useChannel<OverviewSnapshot>(OVERVIEW_CHANNEL);
+  const { data } = useChannel<OverviewSnapshot>(selected ? null : OVERVIEW_CHANNEL);
 
-  const subtitle = data
-    ? `${data.runtime} runtime${data.runtimeHealthy ? '' : ' — unreachable'}`
-    : 'connecting…';
+  if (selected) {
+    return (
+      <AppShell title="Agent" subtitle={selected}>
+        <AgentDetail threadKey={selected} onBack={() => setSelected(null)} />
+      </AppShell>
+    );
+  }
 
   return (
-    <AppShell title="Agents" subtitle={subtitle}>
+    <AppShell
+      title="Agents"
+      subtitle={data ? `${data.runtime} runtime${data.runtimeHealthy ? '' : ' — unreachable'}` : 'connecting…'}
+    >
       {!data ? (
         <div className="text-sm text-dim">Loading fleet…</div>
       ) : (
@@ -26,7 +34,6 @@ export default function App() {
           )}
           <OverviewBar snapshot={data} />
           <AgentGrid agents={data.agents} onOpen={setSelected} />
-          {selected && <div className="text-xs text-dim">Selected {selected}</div>}
         </div>
       )}
     </AppShell>
