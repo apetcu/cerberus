@@ -89,7 +89,55 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   // Batched: the hub coalesces bursts so a chatty container cannot flood the socket.
   z.object({ type: z.literal('log'), channel: z.string(), lines: z.array(z.string()) }),
   z.object({ type: z.literal('log_end'), channel: z.string(), reason: z.string() }),
+  z.object({
+    type: z.literal('activity'),
+    events: z.array(z.object({
+      id: z.string(), kind: z.string(), threadKey: z.string(), at: z.string(),
+    })),
+  }),
   z.object({ type: z.literal('error'), channel: z.string().optional(), message: z.string() }),
   z.object({ type: z.literal('pong') }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
+
+export const ACTIVITY_CHANNEL = 'activity';
+
+export type ActivityKind =
+  | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted';
+
+export interface ActivityEvent {
+  /** ULID, stable key for the UI. */
+  id: string;
+  kind: ActivityKind;
+  threadKey: string;
+  /** ISO-8601 */
+  at: string;
+}
+
+export interface SystemInfo {
+  runtime: 'docker' | 'k8s';
+  agentImage: string;
+  versions: { orchestrator: string; node: string };
+  config: {
+    idleTimeoutMs: number;
+    reaperIntervalMs: number;
+    maxConcurrentAgents: number;
+    agentCpu: number;
+    agentMemoryMb: number;
+    agentPidsLimit: number;
+    workspacesRoot: string;
+    logLevel: string;
+    dashboardEnabled: boolean;
+    /** Never the token itself. */
+    dashboardTokenSet: boolean;
+  };
+  slack: {
+    connected: boolean;
+    botUserId: string | null;
+    botName: string | null;
+    teamName: string | null;
+    lastEventAt: string | null;
+  };
+  dependencies: { redis: 'ok' | 'error'; postgres: 'ok' | 'error'; runtime: 'ok' | 'error' };
+  drain: { enabled: boolean; since: string | null };
+}

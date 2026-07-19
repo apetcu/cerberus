@@ -1,5 +1,5 @@
 export interface CerberusEvent {
-  kind: 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed';
+  kind: 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted';
   threadKey: string;
   /** ISO-8601 */
   at: string;
