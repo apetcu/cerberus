@@ -17,6 +17,7 @@ export function AgentDetail({ threadKey, onBack }: { threadKey: string; onBack: 
   const [tab, setTab] = useState<Tab>('overview');
   const [showLogs, setShowLogs] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const { data, error } = useChannel<Detail>(threadChannel(threadKey));
 
   async function act(label: string, fn: () => Promise<unknown>) {
@@ -48,13 +49,20 @@ export function AgentDetail({ threadKey, onBack }: { threadKey: string; onBack: 
           </button>
           <button
             disabled={busy !== null}
-            onClick={() => void act('restart', () => api.restartAgent(threadKey))}
+            onClick={() => void act('restart', async () => {
+              const r = await api.restartAgent(threadKey);
+              setNotice(r.outcome === 'spawned' ? null : `Not started: ${r.outcome}`);
+            })}
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-bg disabled:opacity-40"
           >
             {busy === 'restart' ? 'Starting…' : 'Restart'}
           </button>
         </div>
       </div>
+
+      {notice && (
+        <div className="rounded-lg border border-warn/30 bg-warn/10 px-4 py-2 text-sm text-warn">{notice}</div>
+      )}
 
       <TabBar tabs={TABS} active={tab} onChange={setTab} />
 

@@ -19,8 +19,6 @@ export default function App() {
   );
   const events = useActivityChannel(view === 'activity');
 
-  const counts = { agents: data?.counts.running, activity: events.length || undefined };
-
   function navigate(next: ConsoleView) {
     setSelected(null);
     setView(next);
@@ -33,7 +31,7 @@ export default function App() {
 
   if (selected) {
     return (
-      <AppShell title="Agent" subtitle={selected} view={view} onNavigate={navigate} counts={counts}>
+      <AppShell title="Agent" subtitle={selected} view={view} onNavigate={navigate}>
         <AgentDetail threadKey={selected} onBack={() => setSelected(null)} />
       </AppShell>
     );
@@ -41,7 +39,7 @@ export default function App() {
 
   if (view === 'activity') {
     return (
-      <AppShell title="Activity" subtitle="Newest first, last 500 events" view={view} onNavigate={navigate} counts={counts}>
+      <AppShell title="Activity" subtitle="Newest first, last 500 events" view={view} onNavigate={navigate}>
         <ActivityView events={events} onOpen={openThread} />
       </AppShell>
     );
@@ -49,7 +47,7 @@ export default function App() {
 
   if (view === 'system') {
     return (
-      <AppShell title="System" subtitle="Resolved configuration and health" view={view} onNavigate={navigate} counts={counts}>
+      <AppShell title="System" subtitle="Resolved configuration and health" view={view} onNavigate={navigate}>
         <SystemView />
       </AppShell>
     );
@@ -61,7 +59,6 @@ export default function App() {
       subtitle={data ? `${data.runtime} runtime${data.runtimeHealthy ? '' : ' (unreachable)'}` : 'connecting…'}
       view={view}
       onNavigate={navigate}
-      counts={counts}
     >
       {!data ? (
         <div className="text-sm text-dim">Loading fleet…</div>

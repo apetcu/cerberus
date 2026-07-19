@@ -5,13 +5,13 @@ import { CoreV1Api, KubeConfig } from '@kubernetes/client-node';
 import { Redis } from 'ioredis';
 import pg from 'pg';
 import { WebSocketServer } from 'ws';
-import type { SystemInfo } from '@cerberus/protocol';
 import { ActivityLog } from './api/activity.js';
 import { EventBus } from './api/events.js';
 import { DashboardHub, type HubSocket } from './api/hub.js';
 import { createApiHandler, isAuthorized } from './api/routes.js';
 import { SnapshotBuilder } from './api/snapshots.js';
 import { createStaticHandler } from './api/static.js';
+import { buildSystemInfo } from './api/system-info.js';
 import type { Config } from './config.js';
 import { DrainState } from './lifecycle/drain.js';
 import { IdleReaper } from './lifecycle/reaper.js';
@@ -101,37 +101,16 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
   let outboxDone: Promise<void> | null = null;
   let sampler: NodeJS.Timeout | null = null;
 
-  const buildSystemInfo = async (): Promise<SystemInfo> => {
-    const check = async (fn: () => Promise<unknown>): Promise<'ok' | 'error'> => {
-      try { await fn(); return 'ok'; } catch { return 'error'; }
-    };
-    const [redisOk, postgresOk, runtimeOk] = await Promise.all([
-      check(() => redisRaw.ping()),
-      check(() => pool.query('SELECT 1')),
-      check(() => runtime.list()),
-    ]);
-    return {
-      runtime: cfg.RUNTIME,
-      agentImage: cfg.AGENT_IMAGE,
-      versions: { orchestrator: process.env.npm_package_version ?? '0.1.0', node: process.version },
-      config: {
-        idleTimeoutMs: cfg.IDLE_TIMEOUT_MS,
-        reaperIntervalMs: cfg.REAPER_INTERVAL_MS,
-        maxConcurrentAgents: cfg.MAX_CONCURRENT_AGENTS,
-        agentCpu: cfg.AGENT_CPU,
-        agentMemoryMb: cfg.AGENT_MEMORY_MB,
-        agentPidsLimit: cfg.AGENT_PIDS_LIMIT,
-        workspacesRoot: cfg.WORKSPACES_ROOT,
-        logLevel: cfg.LOG_LEVEL,
-        dashboardEnabled: cfg.DASHBOARD_ENABLED,
-        // Boolean only: the token itself must never cross the wire.
-        dashboardTokenSet: cfg.DASHBOARD_TOKEN.length > 0,
-      },
-      slack: gateway.getStatus(),
-      dependencies: { redis: redisOk, postgres: postgresOk, runtime: runtimeOk },
-      drain: { enabled: drain.enabled, since: drain.since },
-    };
-  };
+  const systemInfo = () => buildSystemInfo({
+    cfg,
+    slack: () => gateway.getStatus(),
+    drain: () => ({ enabled: drain.enabled, since: drain.since }),
+    checks: {
+      redis: () => redisRaw.ping(),
+      postgres: () => pool.query('SELECT 1'),
+      runtime: () => runtime.list(),
+    },
+  });
 
   return {
     async start() {
@@ -142,7 +121,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
         ? [
             createApiHandler({
               snapshots, capabilities, registry, runtime, supervisor,
-              activity, drain, system: buildSystemInfo, events,
+              activity, drain, system: systemInfo, events,
               token: cfg.DASHBOARD_TOKEN, log,
             }),
             createStaticHandler(distDir),

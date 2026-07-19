@@ -50,6 +50,8 @@ export function SystemView() {
     try {
       await api.setDrain(!info.drain.enabled);
       await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not change drain state');
     } finally {
       setBusy(false);
     }
@@ -63,7 +65,7 @@ export function SystemView() {
       {info.drain.enabled && (
         <div className="rounded-lg border border-warn/30 bg-warn/10 px-4 py-2 text-sm text-warn">
           Draining since {new Date(info.drain.since ?? '').toLocaleTimeString()}. Existing agents keep
-          running; new threads are queued rather than spawned.
+          running; new threads are not spawned until you resume.
         </div>
       )}
 
@@ -122,8 +124,8 @@ export function SystemView() {
           {info.drain.enabled ? 'Resume spawning' : 'Drain the fleet'}
         </button>
         <span className="text-xs text-dim">
-          Draining pauses new agent spawns without stopping running ones. Messages queue and are
-          answered once you resume.
+          Draining pauses new agent spawns without stopping running ones. Queued threads start again
+          on their next message after you resume.
         </span>
       </div>
     </div>

@@ -126,7 +126,7 @@ In-memory and process-local, matching the single-replica orchestrator. `ThreadSu
 
 `EnsureOutcome` gains `'drained'` alongside `already-running | spawned | deferred | failed`. `EventRouter` posts a distinct Slack message for it, because "we are deploying, back shortly" and "all slots are busy" are different facts and the existing deferred copy would be misleading.
 
-Draining does not stop running agents and does not drop messages: the mailbox write happens before `ensureRunning`, so anything that arrives while drained is processed once draining ends.
+Draining does not stop running agents and does not drop messages: the mailbox write happens before `ensureRunning`, so anything arriving while drained waits in the stream. Note that resuming does not itself sweep queued threads; a drained thread starts again on its next inbound message. A resume-sweep is deliberately out of scope.
 
 ## Sidebar and routing
 

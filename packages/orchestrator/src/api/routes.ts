@@ -230,9 +230,8 @@ export function createApiHandler(deps: ApiDeps) {
           const result = await deps.supervisor.ensureRunning({
             threadKey: key, teamId: record.teamId, channelId: record.channelId, threadTs: record.threadTs,
           });
-          if (result.outcome === 'spawned') {
-            deps.events?.publish({ kind: 'agent_spawned', threadKey: key, at: new Date().toISOString() });
-          }
+          // ThreadSupervisor already publishes agent_spawned on every successful spawn;
+          // publishing again here would double the feed row.
           json(res, 200, { outcome: result.outcome });
           return true;
         }

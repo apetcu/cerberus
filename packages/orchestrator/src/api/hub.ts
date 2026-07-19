@@ -169,7 +169,8 @@ export class DashboardHub {
     try {
       for (const client of this.clients) {
         for (const channel of client.channels) {
-          if (channel.startsWith('logs:')) continue;
+          // Activity is fully event-driven; the tick exists for state that emits no events.
+          if (channel.startsWith('logs:') || channel === ACTIVITY_CHANNEL) continue;
           await this.sendSnapshot(client, channel);
         }
       }
