@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import pino from 'pino';
-import { mailboxKey } from '@cerberus/protocol';
 import { MemoryThreadRegistry } from '../src/registry/memory-thread-registry.js';
 import { DrainState } from '../src/lifecycle/drain.js';
 import { MailboxSweeper } from '../src/lifecycle/sweeper.js';
@@ -20,16 +19,21 @@ async function seed(
   await registry.setStatus(threadKey, status);
 }
 
-function makeMailbox(depths: Record<string, number>) {
-  return { xlen: vi.fn(async (key: string) => depths[key] ?? 0) };
+/**
+ * Fake of the MailboxBacklog contract: hasUserWork answers per thread key. Deliberately
+ * NOT a fake xlen: the stream retains acked history, so "entries exist" is not "work
+ * exists" and a fake modelling depths would assert behavior production cannot produce.
+ */
+function makeMailbox(work: Record<string, boolean>) {
+  return { hasUserWork: vi.fn(async (threadKey: string) => work[threadKey] ?? false) };
 }
 
 describe('MailboxSweeper', () => {
-  it('revives a stopped thread with pending mail', async () => {
+  it('revives a stopped thread with unprocessed user work', async () => {
     const registry = new MemoryThreadRegistry();
     const THREAD = 'T1-C1-1.2';
     await seed(registry, THREAD, 'stopped');
-    const mailbox = makeMailbox({ [mailboxKey(THREAD)]: 3 });
+    const mailbox = makeMailbox({ [THREAD]: true });
     const ensureRunning = vi.fn(async () => ({
       record: (await registry.get(THREAD))!, outcome: 'spawned' as EnsureOutcome,
     }));
@@ -42,30 +46,33 @@ describe('MailboxSweeper', () => {
     });
   });
 
-  it('ignores a stopped thread with an empty mailbox', async () => {
+  it('ignores a stopped thread with no unprocessed user work, however much acked history its stream retains', async () => {
     const registry = new MemoryThreadRegistry();
     const THREAD = 'T1-C1-1.2';
     await seed(registry, THREAD, 'stopped');
-    const mailbox = makeMailbox({});
+    // A thread that conversed and was cleanly reaped: its stream still holds every acked
+    // entry plus the reaper's shutdown control, but none of that is work.
+    const mailbox = makeMailbox({ [THREAD]: false });
     const ensureRunning = vi.fn();
     const drain = new DrainState();
     const sweeper = new MailboxSweeper({ registry, mailbox, supervisor: { ensureRunning }, drain, log });
 
     expect(await sweeper.sweep()).toBe(0);
+    expect(mailbox.hasUserWork).toHaveBeenCalledWith(THREAD);
     expect(ensureRunning).not.toHaveBeenCalled();
   });
 
-  it('ignores a running thread even with pending mail', async () => {
+  it('ignores a running thread even with pending work', async () => {
     const registry = new MemoryThreadRegistry();
     const THREAD = 'T1-C1-1.2';
     await seed(registry, THREAD, 'running');
-    const mailbox = makeMailbox({ [mailboxKey(THREAD)]: 5 });
+    const mailbox = makeMailbox({ [THREAD]: true });
     const ensureRunning = vi.fn();
     const drain = new DrainState();
     const sweeper = new MailboxSweeper({ registry, mailbox, supervisor: { ensureRunning }, drain, log });
 
     expect(await sweeper.sweep()).toBe(0);
-    expect(mailbox.xlen).not.toHaveBeenCalled();
+    expect(mailbox.hasUserWork).not.toHaveBeenCalled();
     expect(ensureRunning).not.toHaveBeenCalled();
   });
 
@@ -73,14 +80,14 @@ describe('MailboxSweeper', () => {
     const registry = new MemoryThreadRegistry();
     const THREAD = 'T1-C1-1.2';
     await seed(registry, THREAD, 'stopped');
-    const mailbox = makeMailbox({ [mailboxKey(THREAD)]: 3 });
+    const mailbox = makeMailbox({ [THREAD]: true });
     const ensureRunning = vi.fn();
     const drain = new DrainState();
     drain.set(true);
     const sweeper = new MailboxSweeper({ registry, mailbox, supervisor: { ensureRunning }, drain, log });
 
     expect(await sweeper.sweep()).toBe(0);
-    expect(mailbox.xlen).not.toHaveBeenCalled();
+    expect(mailbox.hasUserWork).not.toHaveBeenCalled();
     expect(ensureRunning).not.toHaveBeenCalled();
   });
 
@@ -90,7 +97,7 @@ describe('MailboxSweeper', () => {
     const GOOD = 'T1-C2-2.2';
     await seed(registry, BAD, 'stopped');
     await seed(registry, GOOD, 'failed');
-    const mailbox = makeMailbox({ [mailboxKey(BAD)]: 1, [mailboxKey(GOOD)]: 1 });
+    const mailbox = makeMailbox({ [BAD]: true, [GOOD]: true });
     const ensureRunning = vi.fn(async ({ threadKey }: { threadKey: string }) => {
       if (threadKey === BAD) throw new Error('boom');
       return { record: (await registry.get(GOOD))!, outcome: 'spawned' as EnsureOutcome };
@@ -112,9 +119,7 @@ describe('MailboxSweeper', () => {
     await seed(registry, ALREADY, 'stopped');
     await seed(registry, DEFERRED, 'stopped');
     await seed(registry, SPAWNED, 'failed');
-    const mailbox = makeMailbox({
-      [mailboxKey(ALREADY)]: 1, [mailboxKey(DEFERRED)]: 1, [mailboxKey(SPAWNED)]: 1,
-    });
+    const mailbox = makeMailbox({ [ALREADY]: true, [DEFERRED]: true, [SPAWNED]: true });
     const outcomes: Record<string, EnsureOutcome> = {
       [ALREADY]: 'already-running', [DEFERRED]: 'deferred', [SPAWNED]: 'spawned',
     };

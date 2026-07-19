@@ -22,6 +22,12 @@ export function parseThreadKey(key: string): ThreadKeyParts {
 }
 
 export const OUTBOX_STREAM = 'outbox';
+/**
+ * The consumer group every agent reads its mailbox through. Shared here because the
+ * orchestrator's MailboxBacklog inspects this group's state to decide whether a thread
+ * holds unprocessed work; the two sides must never drift apart on the name.
+ */
+export const MAILBOX_GROUP = 'agent';
 export const mailboxKey = (threadKey: string): string => `mailbox:${threadKey}`;
 export const dedupKey = (id: string): string => `dedup:slack:${id}`;
 export const deliveryGuardKey = (outboundId: string): string => `delivered:${outboundId}`;

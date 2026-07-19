@@ -65,7 +65,9 @@ export class MailboxSweeper {
 }
 ```
 
-Each tick it finds threads that have pending mail and no running agent, and calls `supervisor.ensureRunning` on each. Candidates come from `registry.listByStatus('stopped')` plus `listByStatus('failed')`; "pending mail" is `mailbox.xlen(mailboxKey(threadKey)) > 0`.
+Each tick it finds threads that have pending mail and no running agent, and calls `supervisor.ensureRunning` on each. Candidates come from `registry.listByStatus('stopped')` plus `listByStatus('failed')`.
+
+"Pending mail" means genuine unprocessed user work, not stream length. `XLEN` must not be used: the stream retains every entry after the agent consumes and acks it (the only trim is `MAXLEN ~ 1000` on `XADD`), so `XLEN` counts history and is nonzero forever after a thread's first message. An `XLEN`-based sweeper revives every cleanly reaped thread within one tick, producing immortal zombies that saturate the concurrency cap. Instead, `MailboxBacklog.hasUserWork` inspects the agent consumer group's state: a thread has pending mail exactly when the stream holds a user message the group has never been delivered (entries after `last-delivered-id` from `XINFO GROUPS`) or one delivered but never acked (the pending entries list from `XPENDING`, meaning the agent crashed mid-turn and must retry it). Control envelopes (`shutdown`, `ping`) never count as pending mail: the reaper publishes its `shutdown` control into the same stream and the container is often gone before consuming it, so counting that leftover would revive the exact thread the reaper just stopped. A thread cleanly reaped with no outstanding work is never revived.
 
 This one loop closes three separate paths back to life: the crashed agent the monitor just marked stopped, the spawn deferred at the concurrency cap, and the thread stranded by drain. Each previously waited on the user to speak again.
 
@@ -137,8 +139,8 @@ The System view renders workspace usage as a labelled bar against the cap. The A
 
 ## Testing
 
-- **Unit:** monitor marks a gone container stopped and publishes the cause; monitor skips a row inside the grace window; monitor stops a wedged container before marking it; sweeper revives a thread with pending mail and skips one without; sweeper is a no-op while draining and runs on resume; GC evicts oldest first until under cap; GC never evicts a running thread's workspace; GC does nothing under the cap; every loop is inert at interval 0.
-- **Integration:** against real Redis and Postgres, a registry row marked running with no container is corrected and then revived when its mailbox is non-empty.
+- **Unit:** monitor marks a gone container stopped and publishes the cause; monitor skips a row inside the grace window; monitor stops a wedged container before marking it; sweeper revives a thread with pending mail and skips one without; sweeper is a no-op while draining and runs on resume; GC evicts oldest first until under cap; GC never evicts a workspace whose status is not evictable; GC does nothing under the cap; every loop is inert at interval 0.
+- **Integration:** against real Redis with a real consumer group and real acknowledgement: a thread whose messages were all consumed and acked has no pending mail, including after a reap parked a shutdown control in its stream; a thread with an undelivered user message has pending mail; a thread with a delivered-but-unacked user message has pending mail; the sweeper revives exactly the latter two.
 - **Browser:** the System view shows workspace usage, and an `agent_died` event appears in the Activity feed after a container is killed out from under the orchestrator.
 
 ## Scope cuts

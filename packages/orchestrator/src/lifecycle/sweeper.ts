@@ -1,4 +1,3 @@
-import { mailboxKey } from '@cerberus/protocol';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { ThreadSupervisor } from './supervisor.js';
@@ -7,7 +6,13 @@ import type { DrainState } from './drain.js';
 
 export interface SweeperDeps {
   registry: ThreadRegistry;
-  mailbox: { xlen(key: string): Promise<number> };
+  /**
+   * True only for genuine unprocessed user work: a user message never delivered to the
+   * agent consumer group, or delivered but never acked. Never XLEN (the stream retains
+   * acked history) and never control envelopes (a reap parks a shutdown control in the
+   * mailbox). Either would revive every thread that ever spoke, forever.
+   */
+  mailbox: { hasUserWork(threadKey: string): Promise<boolean> };
   supervisor: Pick<ThreadSupervisor, 'ensureRunning'>;
   drain: DrainState;
   log: Logger;
@@ -37,8 +42,7 @@ export class MailboxSweeper {
 
     for (const rec of candidates) {
       try {
-        const pending = await mailbox.xlen(mailboxKey(rec.threadKey));
-        if (pending <= 0) continue;
+        if (!(await mailbox.hasUserWork(rec.threadKey))) continue;
 
         const { outcome } = await supervisor.ensureRunning({
           threadKey: rec.threadKey,

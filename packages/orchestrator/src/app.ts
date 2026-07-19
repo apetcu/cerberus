@@ -21,7 +21,7 @@ import { ThreadSupervisor } from './lifecycle/supervisor.js';
 import { MailboxSweeper } from './lifecycle/sweeper.js';
 import { WorkspaceGC } from './lifecycle/workspace-gc.js';
 import { OutboxConsumer } from './mailbox/outbox-consumer.js';
-import { MailboxProducer, RedisDedupStore, RedisDeliveryGuard, type StreamsClient } from './mailbox/redis-stores.js';
+import { MailboxBacklog, MailboxProducer, RedisDedupStore, RedisDeliveryGuard, type StreamsClient } from './mailbox/redis-stores.js';
 import { startHealthServer } from './observability/health.js';
 import type { Logger } from './observability/logger.js';
 import { Metrics } from './observability/metrics.js';
@@ -109,7 +109,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     { runtime: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT });
 
   const liveness = new LivenessMonitor({ registry, runtime, redis, log, events, metrics }, cfg.HEARTBEAT_GRACE_MS);
-  const sweeper = new MailboxSweeper({ registry, mailbox: redis, supervisor, drain, log, events });
+  const sweeper = new MailboxSweeper({ registry, mailbox: new MailboxBacklog(redis), supervisor, drain, log, events });
   const workspaceGc = new WorkspaceGC({ root: cfg.WORKSPACES_ROOT, registry, log, events }, cfg.WORKSPACES_MAX_MB);
   // Resuming from drain makes the "queued threads are picked up automatically" promise
   // honest: it sweeps immediately rather than waiting for the next sweep interval.
