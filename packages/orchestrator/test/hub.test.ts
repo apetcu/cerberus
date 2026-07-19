@@ -20,7 +20,10 @@ class FakeSocket implements HubSocket {
   }
 }
 
-function makeHub(logLines: string[] = [], opts: { detail?: unknown } = {}) {
+function makeHub(
+  logLines: string[] = [],
+  opts: { detail?: unknown; registryGet?: () => Promise<unknown> } = {},
+) {
   const events = new EventBus();
   const aborted: AbortSignal[] = [];
   const runtime = {
@@ -36,7 +39,9 @@ function makeHub(logLines: string[] = [], opts: { detail?: unknown } = {}) {
       overview: vi.fn(async () => ({ generatedAt: 'now', agents: [] })),
       detail: vi.fn(async () => opts.detail ?? { threadKey: KEY }),
     } as never,
-    registry: { get: vi.fn(async () => ({ threadKey: KEY, containerName: 'cerberus-agent-x' })) } as never,
+    registry: {
+      get: opts.registryGet ?? (async () => ({ threadKey: KEY, containerName: 'cerberus-agent-x' })),
+    } as never,
     runtime, events, log, tickMs: 10_000, debounceMs: 5,
   });
   return { hub, events, aborted };
@@ -96,8 +101,9 @@ describe('DashboardHub', () => {
     const socket = new FakeSocket();
     hub.addClient(socket);
     socket.subscribe(logsChannel(KEY));
-    await flush();
-    expect(socket.ofType('log').map((m) => (m as { line: string }).line)).toEqual(['line-one', 'line-two']);
+    await flush(120);
+    const lines = socket.ofType('log').flatMap((m) => (m as { lines: string[] }).lines);
+    expect(lines).toEqual(['line-one', 'line-two']);
     socket.unsubscribe(logsChannel(KEY));
     await flush();
     expect(aborted[0]!.aborted).toBe(true);
@@ -112,6 +118,42 @@ describe('DashboardHub', () => {
     socket.emit('close');
     await flush();
     expect(aborted[0]!.aborted).toBe(true);
+  });
+
+  it('reports log_end instead of crashing when the registry lookup fails', async () => {
+    const { hub } = makeHub([], { registryGet: async () => { throw new Error('db down'); } });
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(logsChannel(KEY));
+    await flush();
+    expect(socket.ofType('log_end')).toHaveLength(1);
+  });
+
+  it('does not leak a log stream when the socket closes during setup', async () => {
+    const { hub, aborted } = makeHub(['x']);
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(logsChannel(KEY));
+    socket.emit('close');            // closes while the lookups are still in flight
+    await flush(80);
+    // Either no stream was ever started, or it was started and aborted — never left running.
+    expect(aborted.every((s) => s.aborted)).toBe(true);
+  });
+
+  it('re-subscribes to events after stop() then start()', async () => {
+    const { hub, events } = makeHub();
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(OVERVIEW_CHANNEL);
+    await flush();
+    hub.start();
+    hub.stop();
+    hub.start();
+    const before = socket.ofType('snapshot').length;
+    events.publish({ kind: 'agent_spawned', threadKey: KEY, at: 'now' });
+    await flush();
+    expect(socket.ofType('snapshot').length).toBeGreaterThan(before);
+    hub.stop();
   });
 
   it('answers ping with pong and rejects malformed messages', async () => {

@@ -4,7 +4,7 @@ import {
 } from '@cerberus/protocol';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
-import type { AgentRuntime } from '../runtime/agent-runtime.js';
+import type { AgentHandle, AgentRuntime } from '../runtime/agent-runtime.js';
 import type { EventBus } from './events.js';
 import type { SnapshotBuilder } from './snapshots.js';
 
@@ -27,9 +27,12 @@ interface Client {
   socket: HubSocket;
   channels: Set<string>;
   logStreams: Map<string, AbortController>;
+  disposed: boolean;
 }
 
 const LOG_TAIL = 200;
+const LOG_BATCH_MAX = 50;
+const LOG_BATCH_MS = 60;
 
 export class DashboardHub {
   private readonly clients = new Set<Client>();
@@ -38,6 +41,7 @@ export class DashboardHub {
   private timer: NodeJS.Timeout | null = null;
   private debounce: NodeJS.Timeout | null = null;
   private unsubscribeEvents: (() => void) | null = null;
+  private flushing = false;
 
   constructor(private readonly deps: HubDeps) {
     this.tickMs = deps.tickMs ?? 2000;
@@ -50,25 +54,36 @@ export class DashboardHub {
   }
 
   start(): void {
+    if (this.timer) return; // already started; do not orphan the existing interval
+    // Re-subscribing here keeps start()/stop() symmetric: stop() unsubscribes, so a
+    // restarted hub must re-attach or it would silently lose all event-driven pushes.
+    this.unsubscribeEvents ??= this.deps.events.onEvent(() => this.scheduleFlush());
     // Reconcile tick: catches state the orchestrator never emits an event for
     // (a container dying on its own, mailbox depth, heartbeat expiry).
     this.timer = setInterval(() => void this.flush(), this.tickMs);
   }
 
   stop(): void {
+    // Pauses the background machinery only (reconcile tick + event-driven flushes).
+    // Connected clients are left alone: they are torn down by their own socket 'close'
+    // event or the unsubscribe function addClient() returns, not by stop(), so a
+    // stop()/start() cycle can resume pushing to sockets that stayed open throughout.
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
     if (this.debounce) clearTimeout(this.debounce);
     this.unsubscribeEvents?.();
-    for (const client of this.clients) this.disposeClient(client);
-    this.clients.clear();
+    this.unsubscribeEvents = null;
   }
 
   addClient(socket: HubSocket): () => void {
-    const client: Client = { socket, channels: new Set(), logStreams: new Map() };
+    const client: Client = { socket, channels: new Set(), logStreams: new Map(), disposed: false };
     this.clients.add(client);
 
     socket.on('message', (raw) => {
-      void this.onMessage(client, raw);
+      void this.onMessage(client, raw).catch((err) => {
+        this.deps.log.error({ err }, 'dashboard message handling failed');
+        this.send(client, { type: 'error', message: 'internal error' });
+      });
     });
     socket.on('close', () => {
       this.disposeClient(client);
@@ -119,11 +134,17 @@ export class DashboardHub {
 
   /** Re-send snapshots for every subscribed non-log channel. */
   private async flush(): Promise<void> {
-    for (const client of this.clients) {
-      for (const channel of client.channels) {
-        if (channel.startsWith('logs:')) continue;
-        await this.sendSnapshot(client, channel);
+    if (this.flushing) return;
+    this.flushing = true;
+    try {
+      for (const client of this.clients) {
+        for (const channel of client.channels) {
+          if (channel.startsWith('logs:')) continue;
+          await this.sendSnapshot(client, channel);
+        }
       }
+    } finally {
+      this.flushing = false;
     }
   }
 
@@ -154,8 +175,20 @@ export class DashboardHub {
     const threadKey = channel.slice('logs:'.length);
     this.stopLogStream(client, channel);
 
-    const record = await this.deps.registry.get(threadKey);
-    const handle = record?.containerName ? await this.deps.runtime.inspect(record.containerName) : null;
+    let handle;
+    try {
+      const record = await this.deps.registry.get(threadKey);
+      handle = record?.containerName ? await this.deps.runtime.inspect(record.containerName) : null;
+    } catch (err) {
+      this.deps.log.warn({ err, threadKey }, 'could not resolve container for log stream');
+      this.send(client, { type: 'log_end', channel, reason: 'could not resolve container' });
+      return;
+    }
+
+    // The client may have disconnected while those lookups were in flight; registering a
+    // controller on a disposed client would leak the stream, since dispose already ran.
+    if (client.disposed) return;
+
     if (!handle) {
       this.send(client, { type: 'log_end', channel, reason: 'no container for this thread' });
       return;
@@ -164,26 +197,52 @@ export class DashboardHub {
     const controller = new AbortController();
     client.logStreams.set(channel, controller);
 
-    void (async () => {
-      try {
-        for await (const line of this.deps.runtime.logs(handle, {
-          tail: LOG_TAIL, follow: true, signal: controller.signal,
-        })) {
-          if (controller.signal.aborted) break;
-          this.send(client, { type: 'log', channel, line });
-        }
-        if (!controller.signal.aborted) {
-          this.send(client, { type: 'log_end', channel, reason: 'stream closed' });
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          this.deps.log.warn({ err, threadKey }, 'log stream failed');
-          this.send(client, { type: 'log_end', channel, reason: 'stream error' });
-        }
-      } finally {
-        client.logStreams.delete(channel);
+    void this.pumpLogs(client, channel, handle, controller);
+  }
+
+  /** Streams lines to one client, batching frames so a chatty container cannot flood the socket. */
+  private async pumpLogs(
+    client: Client,
+    channel: string,
+    handle: AgentHandle,
+    controller: AbortController,
+  ): Promise<void> {
+    let batch: string[] = [];
+    let timer: NodeJS.Timeout | null = null;
+
+    const flushBatch = (): void => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
       }
-    })();
+      if (batch.length === 0) return;
+      const lines = batch;
+      batch = [];
+      this.send(client, { type: 'log', channel, lines });
+    };
+
+    try {
+      for await (const line of this.deps.runtime.logs(handle, {
+        tail: LOG_TAIL, follow: true, signal: controller.signal,
+      })) {
+        if (controller.signal.aborted) break;
+        batch.push(line);
+        if (batch.length >= LOG_BATCH_MAX) flushBatch();
+        else if (!timer) timer = setTimeout(flushBatch, LOG_BATCH_MS);
+      }
+      flushBatch();
+      if (!controller.signal.aborted) {
+        this.send(client, { type: 'log_end', channel, reason: 'stream closed' });
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        this.deps.log.warn({ err, channel }, 'log stream failed');
+        this.send(client, { type: 'log_end', channel, reason: 'stream error' });
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      client.logStreams.delete(channel);
+    }
   }
 
   private stopLogStream(client: Client, channel: string): void {
@@ -194,6 +253,7 @@ export class DashboardHub {
   }
 
   private disposeClient(client: Client): void {
+    client.disposed = true;
     for (const controller of client.logStreams.values()) controller.abort();
     client.logStreams.clear();
     client.channels.clear();

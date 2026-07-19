@@ -86,7 +86,8 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 export const serverMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot'), channel: z.string(), data: z.unknown() }),
-  z.object({ type: z.literal('log'), channel: z.string(), line: z.string() }),
+  // Batched: the hub coalesces bursts so a chatty container cannot flood the socket.
+  z.object({ type: z.literal('log'), channel: z.string(), lines: z.array(z.string()) }),
   z.object({ type: z.literal('log_end'), channel: z.string(), reason: z.string() }),
   z.object({ type: z.literal('error'), channel: z.string().optional(), message: z.string() }),
   z.object({ type: z.literal('pong') }),

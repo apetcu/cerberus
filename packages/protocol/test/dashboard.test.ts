@@ -37,9 +37,9 @@ describe('ws envelopes', () => {
   });
 
   it('parses server messages', () => {
-    expect(serverMessageSchema.parse({ type: 'log', channel: 'logs:k', line: 'hello' }))
-      .toEqual({ type: 'log', channel: 'logs:k', line: 'hello' });
-    const log = serverMessageSchema.parse({ type: 'log', channel: 'logs:k', line: 'hello' });
+    expect(serverMessageSchema.parse({ type: 'log', channel: 'logs:k', lines: ['hello'] }))
+      .toEqual({ type: 'log', channel: 'logs:k', lines: ['hello'] });
+    const log = serverMessageSchema.parse({ type: 'log', channel: 'logs:k', lines: ['hello'] });
     expect(log.type).toBe('log');
     const err = serverMessageSchema.parse({ type: 'error', message: 'nope' });
     expect(err.type).toBe('error');
