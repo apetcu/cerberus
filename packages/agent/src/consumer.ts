@@ -68,7 +68,7 @@ export class MailboxConsumer {
     try {
       msg = decodeInbound(fields);
     } catch (err) {
-      // Malformed payload: ack and drop — retrying can never succeed.
+      // Malformed payload: ack and drop, retrying can never succeed.
       this.log.error(`dropping malformed mailbox entry ${entryId}: ${String(err)}`);
       await this.redis.xack(this.key, GROUP, entryId);
       return 'processed';

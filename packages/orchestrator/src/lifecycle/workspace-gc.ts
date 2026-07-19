@@ -1,8 +1,10 @@
 import { readdir, rm, stat as fsStat } from 'node:fs/promises';
 import type { WorkspaceUsage } from '@cerberus/protocol';
+import type { ThreadStatus } from '../domain/thread.js';
 import type { Logger } from '../observability/logger.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { EventBus } from '../api/events.js';
+import type { ThreadLocks } from './supervisor.js';
 
 /**
  * The narrow filesystem surface WorkspaceGC needs. Kept small on purpose: every method
@@ -79,6 +81,8 @@ export const nodeWorkspaceFs: WorkspaceFs = {
 export interface WorkspaceGCDeps {
   root: string;
   registry: ThreadRegistry;
+  /** The supervisor's own per-thread mutex, so eviction and spawn cannot interleave. */
+  locks: ThreadLocks;
   log: Logger;
   events?: EventBus;
   /** Injected for tests; defaults to node:fs/promises. */
@@ -98,12 +102,29 @@ function joinPath(root: string, name: string): string {
 }
 
 /**
+ * The only statuses whose workspaces may be deleted. An allowlist on purpose:
+ * 'provisioning' is the supervisor mid-spawn, 'stopping' is the reaper's graceful-stop
+ * window in which the agent has up to 30 more seconds and is still flushing
+ * conversation.json, and a status added later is protected until someone decides
+ * otherwise. Denying by default fails safe; a denylist of "running" did not.
+ */
+const EVICTABLE_STATUSES: ReadonlySet<ThreadStatus> = new Set(['stopped', 'failed']);
+
+/**
  * Bounds total workspace disk by evicting the least recently touched workspace directories
- * once a cap is exceeded. A workspace whose thread has a running container is never
- * evicted: deleting the directory out from under a live agent would corrupt the
- * conversation it is mid-way through writing. If honoring that means the cap cannot be
- * met, collect() logs a warning naming the shortfall and stops. It never deletes a
- * protected workspace to satisfy a number.
+ * once a cap is exceeded. Only workspaces whose thread status is in EVICTABLE_STATUSES may
+ * be deleted: deleting the directory out from under a live agent would corrupt the
+ * conversation it is mid-way through writing. Because the sweeper turns stopped threads
+ * back into running ones on its own schedule, each delete re-reads that thread's status
+ * under the supervisor's per-thread lock immediately before removing anything, so an
+ * eviction can never interleave with a spawn on the same thread key. A directory with no
+ * registry row at all is orphan data (every spawn path creates the row first and rows are
+ * never deleted, and the boot reconciler re-adopts any live container into the registry):
+ * it is evicted to keep the cap enforceable, but logged rather than published, because a
+ * workspace_evicted event would surface the directory name as a pseudo-thread in the
+ * Activity feed. If honoring the protections means the cap cannot be met, collect() logs
+ * a warning naming the shortfall and stops. It never deletes a protected workspace to
+ * satisfy a number.
  */
 export class WorkspaceGC {
   private readonly fs: WorkspaceFs;
@@ -146,9 +167,31 @@ export class WorkspaceGC {
     return { totalBytes, capBytes: this.capBytes, count, oldestTouchedAt };
   }
 
-  /** Evicts least recently touched, unprotected workspaces until under the cap. Returns bytes reclaimed. */
+  /** True when this directory may be deleted right now: orphan, or an evictable status. */
+  private async isEvictable(name: string): Promise<boolean> {
+    const rec = await this.deps.registry.get(name);
+    return rec === null || EVICTABLE_STATUSES.has(rec.status);
+  }
+
+  /**
+   * Rechecks and deletes one workspace under the supervisor's per-thread lock. The status
+   * snapshot taken while sorting candidates goes stale as deletes of large directories
+   * take real time and the sweeper revives threads on its own schedule, so the decision
+   * that matters is made here, immediately before the delete, where no spawn for the same
+   * thread key can interleave.
+   */
+  private async evictLocked(entry: WorkspaceEntry): Promise<'skipped' | 'thread' | 'orphan'> {
+    return this.deps.locks.withThreadLock(entry.name, async () => {
+      const rec = await this.deps.registry.get(entry.name);
+      if (rec !== null && !EVICTABLE_STATUSES.has(rec.status)) return 'skipped';
+      await this.fs.remove(entry.path);
+      return rec === null ? 'orphan' : 'thread';
+    });
+  }
+
+  /** Evicts least recently touched, evictable workspaces until under the cap. Returns bytes reclaimed. */
   async collect(): Promise<number> {
-    const { registry, log } = this.deps;
+    const { log } = this.deps;
     if (this.maxMb === 0) return 0;
 
     const capBytes = this.capBytes;
@@ -156,32 +199,41 @@ export class WorkspaceGC {
     let total = entries.reduce((sum, e) => sum + e.bytes, 0);
     if (total <= capBytes) return 0;
 
-    const running = await registry.listByStatus('running');
-    const protectedNames = new Set(running.map((r) => r.threadKey));
-
-    const candidates = entries
-      .filter((e) => !protectedNames.has(e.name))
-      .sort((a, b) => a.lastTouchedAt.getTime() - b.lastTouchedAt.getTime());
+    const candidates: WorkspaceEntry[] = [];
+    for (const entry of entries) {
+      if (await this.isEvictable(entry.name)) candidates.push(entry);
+    }
+    candidates.sort((a, b) => a.lastTouchedAt.getTime() - b.lastTouchedAt.getTime());
 
     let reclaimed = 0;
     for (const entry of candidates) {
       if (total <= capBytes) break;
-      await this.fs.remove(entry.path);
+      const outcome = await this.evictLocked(entry);
+      if (outcome === 'skipped') continue;
       total -= entry.bytes;
       reclaimed += entry.bytes;
-      this.deps.events?.publish({
-        kind: 'workspace_evicted',
-        threadKey: entry.name,
-        at: new Date().toISOString(),
-        bytes: entry.bytes,
-      });
+      if (outcome === 'thread') {
+        this.deps.events?.publish({
+          kind: 'workspace_evicted',
+          threadKey: entry.name,
+          at: new Date().toISOString(),
+          bytes: entry.bytes,
+        });
+      } else {
+        // No registry row: not a thread, so no Activity event. Logged so the deletion is
+        // still visible to an operator instead of a directory silently vanishing.
+        log.warn(
+          { directory: entry.name, bytes: entry.bytes, root: this.deps.root },
+          'workspace GC evicted a directory with no registry row',
+        );
+      }
     }
 
     if (total > capBytes) {
       const shortfallBytes = total - capBytes;
       log.warn(
         { shortfallBytes, root: this.deps.root },
-        'workspace GC could not reach the cap: every remaining workspace over the limit belongs to a running agent',
+        'workspace GC could not reach the cap: every remaining workspace over the limit belongs to a thread that is not evictable',
       );
     }
 

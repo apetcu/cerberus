@@ -110,7 +110,11 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
 
   const liveness = new LivenessMonitor({ registry, runtime, redis, log, events, metrics }, cfg.HEARTBEAT_GRACE_MS);
   const sweeper = new MailboxSweeper({ registry, mailbox: new MailboxBacklog(redis), supervisor, drain, log, events });
-  const workspaceGc = new WorkspaceGC({ root: cfg.WORKSPACES_ROOT, registry, log, events }, cfg.WORKSPACES_MAX_MB);
+  // locks: supervisor shares its own per-thread mutex so eviction and spawn serialize.
+  const workspaceGc = new WorkspaceGC(
+    { root: cfg.WORKSPACES_ROOT, registry, locks: supervisor, log, events },
+    cfg.WORKSPACES_MAX_MB,
+  );
   // Resuming from drain makes the "queued threads are picked up automatically" promise
   // honest: it sweeps immediately rather than waiting for the next sweep interval.
   drain.onResume(() => {

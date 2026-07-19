@@ -24,6 +24,16 @@ export interface SupervisorConfig {
 
 export type EnsureOutcome = 'already-running' | 'spawned' | 'deferred' | 'failed' | 'drained';
 
+/**
+ * Serialises arbitrary work against this supervisor's spawns for one thread key.
+ * WorkspaceGC takes this around its final status recheck and directory delete so an
+ * eviction can never interleave with a spawn on the same thread. It must be the
+ * supervisor's own mutex: a second KeyedMutex instance elsewhere would order nothing.
+ */
+export interface ThreadLocks {
+  withThreadLock<T>(threadKey: string, fn: () => Promise<T>): Promise<T>;
+}
+
 export interface EnsureParams {
   threadKey: string;
   teamId: string;
@@ -56,6 +66,11 @@ export class ThreadSupervisor {
 
   async ensureRunning(p: EnsureParams): Promise<{ record: ThreadRecord; outcome: EnsureOutcome }> {
     return this.mutex.run(p.threadKey, () => this.ensureLocked(p));
+  }
+
+  /** See ThreadLocks. Runs fn holding the same per-thread mutex ensureRunning spawns under. */
+  async withThreadLock<T>(threadKey: string, fn: () => Promise<T>): Promise<T> {
+    return this.mutex.run(threadKey, fn);
   }
 
   private async ensureLocked(p: EnsureParams): Promise<{ record: ThreadRecord; outcome: EnsureOutcome }> {
