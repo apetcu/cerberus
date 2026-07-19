@@ -1,11 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import { capabilitiesSchema } from '@cerberus/protocol';
+import { capabilitiesSchema, type SystemInfo } from '@cerberus/protocol';
+import { z } from 'zod';
+import type { DrainState } from '../lifecycle/drain.js';
 import type { ThreadSupervisor } from '../lifecycle/supervisor.js';
 import type { Logger } from '../observability/logger.js';
 import type { CapabilitiesRepo } from '../registry/capabilities-repo.js';
 import type { ThreadRegistry } from '../registry/thread-registry.js';
 import type { AgentRuntime } from '../runtime/agent-runtime.js';
+import type { ActivityLog } from './activity.js';
+import type { EventBus } from './events.js';
 import type { SnapshotBuilder } from './snapshots.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -19,6 +23,10 @@ export interface ApiDeps {
   registry: ThreadRegistry;
   runtime: AgentRuntime;
   supervisor: Pick<ThreadSupervisor, 'ensureRunning'>;
+  activity: ActivityLog;
+  drain: DrainState;
+  system: () => Promise<SystemInfo>;
+  events?: EventBus;
   /** Empty string disables auth. */
   token: string;
   log: Logger;
@@ -111,6 +119,37 @@ export function createApiHandler(deps: ApiDeps) {
         return true;
       }
 
+      if (parts[1] === 'activity' && method === 'GET') {
+        const rawLimit = Number(url.searchParams.get('limit') ?? '200');
+        const limit = Number.isFinite(rawLimit)
+          ? Math.min(Math.max(Math.trunc(rawLimit), 1), 500)
+          : 200;
+        json(res, 200, { events: deps.activity.recent(limit) });
+        return true;
+      }
+
+      if (parts[1] === 'system' && parts.length === 2 && method === 'GET') {
+        json(res, 200, await deps.system());
+        return true;
+      }
+
+      if (parts[1] === 'system' && parts[2] === 'drain' && method === 'POST') {
+        let body: unknown;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof PayloadTooLargeError) { json(res, 413, { error: 'body too large' }); return true; }
+          json(res, 400, { error: 'invalid json' });
+          return true;
+        }
+        const parsed = z.object({ enabled: z.boolean() }).safeParse(body);
+        if (!parsed.success) { json(res, 400, { error: 'expected { enabled: boolean }' }); return true; }
+        deps.drain.set(parsed.data.enabled);
+        deps.log.info({ enabled: parsed.data.enabled }, 'drain state changed');
+        json(res, 200, { enabled: deps.drain.enabled, since: deps.drain.since });
+        return true;
+      }
+
       if (parts[1] === 'threads' && parts.length === 2 && method === 'GET') {
         json(res, 200, (await deps.snapshots.overview()).agents);
         return true;
@@ -180,6 +219,7 @@ export function createApiHandler(deps: ApiDeps) {
           if (!handle) { json(res, 404, { error: 'no container for thread' }); return true; }
           await deps.runtime.stop(handle, true);
           await deps.registry.setStatus(key, 'stopped', { containerId: null, containerName: null });
+          deps.events?.publish({ kind: 'agent_stopped', threadKey: key, at: new Date().toISOString() });
           json(res, 200, { stopped: true });
           return true;
         }
@@ -190,6 +230,9 @@ export function createApiHandler(deps: ApiDeps) {
           const result = await deps.supervisor.ensureRunning({
             threadKey: key, teamId: record.teamId, channelId: record.channelId, threadTs: record.threadTs,
           });
+          if (result.outcome === 'spawned') {
+            deps.events?.publish({ kind: 'agent_spawned', threadKey: key, at: new Date().toISOString() });
+          }
           json(res, 200, { outcome: result.outcome });
           return true;
         }

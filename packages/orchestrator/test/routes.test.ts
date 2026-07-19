@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesSchema, type AgentDetail, type OverviewSnapshot } from '@cerberus/protocol';
+import { DrainState } from '../src/lifecycle/drain.js';
 import { createApiHandler, isAuthorized, type ApiDeps } from '../src/api/routes.js';
 
 const log = pino({ level: 'silent' });
@@ -26,6 +27,22 @@ function makeDeps(overrides: Partial<ApiDeps> = {}): ApiDeps {
     registry: { get: vi.fn(async (k: string) => (k === KEY ? ({ threadKey: k } as never) : null)) } as never,
     runtime: { inspect: vi.fn(async () => null), stop: vi.fn() } as never,
     supervisor: { ensureRunning: vi.fn(async () => ({ record: {} as never, outcome: 'spawned' as const })) },
+    activity: { recent: vi.fn((limit?: number) =>
+      [{ id: '1', kind: 'agent_spawned', threadKey: KEY, at: 'now' }].slice(0, limit ?? 500)) } as never,
+    drain: new DrainState(),
+    system: vi.fn(async () => ({
+      runtime: 'docker', agentImage: 'cerberus-agent:dev',
+      versions: { orchestrator: '0.1.0', node: 'v22.0.0' },
+      config: {
+        idleTimeoutMs: 1800000, reaperIntervalMs: 60000, maxConcurrentAgents: 50,
+        agentCpu: 0.5, agentMemoryMb: 512, agentPidsLimit: 256,
+        workspacesRoot: '/workspaces', logLevel: 'info',
+        dashboardEnabled: true, dashboardTokenSet: true,
+      },
+      slack: { connected: true, botUserId: 'U1', botName: 'bot', teamName: 'T', lastEventAt: 'now' },
+      dependencies: { redis: 'ok', postgres: 'ok', runtime: 'ok' },
+      drain: { enabled: false, since: null },
+    })) as never,
     token: '',
     log,
     ...overrides,
@@ -141,5 +158,42 @@ describe('api routes', () => {
     await serve(makeDeps({ token: 'sekret' }));
     expect((await fetch(`${base}/api/overview`, { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
     expect((await fetch(`${base}/api/overview`, { headers: { authorization: 'Bearer sekretsekret' } })).status).toBe(401);
+  });
+
+  it('GET /api/activity returns events and clamps the limit', async () => {
+    const deps = makeDeps();
+    await serve(deps);
+    const res = await fetch(`${base}/api/activity?limit=9999`);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { events: unknown[] }).events).toHaveLength(1);
+    expect(deps.activity.recent).toHaveBeenCalledWith(500);
+  });
+
+  it('GET /api/system returns the payload and leaks no secrets', async () => {
+    await serve(makeDeps({ token: 'super-secret-token' }));
+    const res = await fetch(`${base}/api/system`, { headers: { authorization: 'Bearer super-secret-token' } });
+    expect(res.status).toBe(200);
+    const raw = JSON.stringify(await res.json());
+    for (const secret of ['super-secret-token', 'xoxb-', 'xapp-', 'postgres://', 'redis://']) {
+      expect(raw).not.toContain(secret);
+    }
+    expect(raw).toContain('"dashboardTokenSet":true');
+  });
+
+  it('POST /api/system/drain toggles and validates', async () => {
+    const deps = makeDeps();
+    await serve(deps);
+    const on = await fetch(`${base}/api/system/drain`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(on.status).toBe(200);
+    expect(deps.drain.enabled).toBe(true);
+
+    const bad = await fetch(`${base}/api/system/drain`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: 'yes' }),
+    });
+    expect(bad.status).toBe(400);
   });
 });

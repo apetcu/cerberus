@@ -1,6 +1,9 @@
 import pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
-import { logsChannel, OVERVIEW_CHANNEL, threadChannel, type ServerMessage } from '@cerberus/protocol';
+import {
+  ACTIVITY_CHANNEL, logsChannel, OVERVIEW_CHANNEL, threadChannel, type ServerMessage,
+} from '@cerberus/protocol';
+import { ActivityLog } from '../src/api/activity.js';
 import { EventBus } from '../src/api/events.js';
 import { DashboardHub, type HubSocket } from '../src/api/hub.js';
 
@@ -32,6 +35,7 @@ function makeHub(
   } = {},
 ) {
   const events = new EventBus();
+  const activity = new ActivityLog(events);
   const aborted: AbortSignal[] = [];
   let logsFinished = false;
   const runtime = {
@@ -54,9 +58,9 @@ function makeHub(
     registry: {
       get: opts.registryGet ?? (async () => ({ threadKey: KEY, containerName: 'cerberus-agent-x' })),
     } as never,
-    runtime, events, log, tickMs: 10_000, debounceMs: 5,
+    runtime, events, activity, log, tickMs: 10_000, debounceMs: 5,
   });
-  return { hub, events, aborted };
+  return { hub, events, activity, aborted };
 }
 
 const flush = (ms = 30) => new Promise((r) => setTimeout(r, ms));
@@ -211,5 +215,34 @@ describe('DashboardHub', () => {
     await flush();
     expect(socket.ofType('pong')).toHaveLength(1);
     expect(socket.ofType('error')).toHaveLength(1);
+  });
+
+  it('sends an activity snapshot on subscribe and a delta per event', async () => {
+    const { hub, events } = makeHub();
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    events.publish({ kind: 'agent_spawned', threadKey: KEY, at: 'now' });
+    socket.subscribe(ACTIVITY_CHANNEL);
+    await flush();
+    const snap = socket.ofType('snapshot').find((m) => m.channel === ACTIVITY_CHANNEL) as
+      { data: { events: unknown[] } } | undefined;
+    expect(snap?.data.events).toHaveLength(1);
+
+    events.publish({ kind: 'reply_posted', threadKey: KEY, at: 'now' });
+    await flush();
+    const deltas = socket.ofType('activity') as unknown as Array<{ events: Array<{ kind: string }> }>;
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]!.events[0]!.kind).toBe('reply_posted');
+  });
+
+  it('does not push activity to clients that did not subscribe', async () => {
+    const { hub, events } = makeHub();
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(OVERVIEW_CHANNEL);
+    await flush();
+    events.publish({ kind: 'agent_spawned', threadKey: KEY, at: 'now' });
+    await flush();
+    expect(socket.ofType('activity')).toHaveLength(0);
   });
 });
