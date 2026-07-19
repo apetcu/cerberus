@@ -93,6 +93,8 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('activity'),
     events: z.array(z.object({
       id: z.string(), kind: z.string(), threadKey: z.string(), at: z.string(),
+      cause: z.enum(['container_gone', 'container_exited', 'heartbeat_stale']).optional(),
+      bytes: z.number().optional(),
     })),
   }),
   z.object({ type: z.literal('error'), channel: z.string().optional(), message: z.string() }),
@@ -113,6 +115,10 @@ export interface ActivityEvent {
   threadKey: string;
   /** ISO-8601 */
   at: string;
+  /** Present only when kind is 'agent_died'. */
+  cause?: 'container_gone' | 'container_exited' | 'heartbeat_stale';
+  /** Present only when kind is 'workspace_evicted'. */
+  bytes?: number;
 }
 
 /** Aggregate disk usage across every thread workspace, as sized by WorkspaceGC. */

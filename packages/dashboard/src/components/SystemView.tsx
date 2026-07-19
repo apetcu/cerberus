@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { SystemInfo } from '@cerberus/protocol';
 import { api } from '../lib/api';
-import { since } from '../lib/format';
+import { since, humanBytes } from '../lib/format';
 
 const HEALTH = { ok: 'text-ok', error: 'text-bad' } as const;
 
@@ -21,6 +21,25 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
       <h3 className="border-b border-line px-4 py-2 text-sm font-medium">{title}</h3>
       <dl className="divide-y divide-line">{children}</dl>
     </section>
+  );
+}
+
+/** Labelled fill bar for disk usage against a cap, colored by how close to full it is. */
+function UsageBar({ usedBytes, capBytes, count }: { usedBytes: number; capBytes: number; count: number }) {
+  const pct = capBytes > 0 ? Math.min(100, (usedBytes / capBytes) * 100) : 0;
+  const tone = pct >= 100 ? 'bg-bad' : pct >= 80 ? 'bg-warn' : 'bg-accent';
+  return (
+    <div className="space-y-2 px-4 py-2.5">
+      <div className="flex items-baseline justify-between gap-4 text-xs">
+        <span className="font-mono text-sm text-ink">
+          {humanBytes(usedBytes)} <span className="text-dim">of {humanBytes(capBytes)}</span>
+        </span>
+        <span className="shrink-0 text-dim">{count} workspace{count === 1 ? '' : 's'}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-line-strong">
+        <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -94,6 +113,17 @@ export function SystemView() {
             </dd>
           </div>
         ))}
+      </Card>
+
+      <Card title="Workspaces">
+        <UsageBar
+          usedBytes={info.workspaces.totalBytes}
+          capBytes={info.workspaces.capBytes}
+          count={info.workspaces.count}
+        />
+        {info.workspaces.oldestTouchedAt && (
+          <Row label="Oldest workspace" value={`${since(info.workspaces.oldestTouchedAt)} ago`} />
+        )}
       </Card>
 
       <Card title="Configuration">

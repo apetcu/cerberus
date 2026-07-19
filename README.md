@@ -375,6 +375,11 @@ Loaded from `deploy/.env`. Values without a default are required.
 | `AGENT_IMAGE` | `cerberus-agent:dev` | Image used for spawned agents |
 | `AGENT_NETWORK` | `cerberus-agents` | Docker network agents attach to |
 | `IDLE_TIMEOUT_MS` | `1800000` | 30 minutes before an idle container is reaped |
+| `LIVENESS_INTERVAL_MS` | `15000` | How often the liveness monitor checks running rows. `0` disables it |
+| `HEARTBEAT_GRACE_MS` | `60000` | How long a row must look unhealthy before it is marked dead |
+| `SWEEP_INTERVAL_MS` | `20000` | How often the mailbox sweeper revives threads with pending mail. `0` disables it |
+| `WORKSPACE_GC_INTERVAL_MS` | `300000` | How often workspace disk usage is checked against the cap. `0` disables it |
+| `WORKSPACES_MAX_MB` | `10240` | Total workspace disk cap; least recently touched workspaces are evicted first. `0` disables the GC |
 | `MAX_CONCURRENT_AGENTS` | `50` | Backpressure cap; further threads queue |
 | `AGENT_CPU` / `AGENT_MEMORY_MB` / `AGENT_PIDS_LIMIT` | `0.5` / `512` / `256` | Per-agent limits |
 | `WORKSPACES_ROOT` | `/workspaces` | Workspace root inside the orchestrator |
@@ -512,7 +517,7 @@ A three-headed dog guarding a threshold, which is roughly the job: many heads, o
 4. **Cost controls.** Token accounting per thread, budget caps, and a cancel button.
 5. **Cross-thread memory.** Today each thread is an island of `conversation.json`.
 
-Known gaps worth naming: a container that dies on its own leaves its registry row reading `running` until the next boot or message; a spawn deferred at the concurrency cap is not retried until the user speaks again; agents have no per-message watchdog.
+Known gaps worth naming: agents have no per-message watchdog, so a single poison message could crash-loop a thread forever even though each crash is individually detected and revived; and the liveness, sweep, and workspace GC loops are all process-local, so none of them would survive a second orchestrator replica without the same partitioning work drain already needs.
 
 ## Documentation
 

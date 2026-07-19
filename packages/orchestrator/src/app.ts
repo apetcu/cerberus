@@ -14,9 +14,12 @@ import { createStaticHandler } from './api/static.js';
 import { buildSystemInfo } from './api/system-info.js';
 import type { Config } from './config.js';
 import { DrainState } from './lifecycle/drain.js';
+import { LivenessMonitor } from './lifecycle/liveness.js';
 import { IdleReaper } from './lifecycle/reaper.js';
 import { Reconciler } from './lifecycle/reconciler.js';
 import { ThreadSupervisor } from './lifecycle/supervisor.js';
+import { MailboxSweeper } from './lifecycle/sweeper.js';
+import { WorkspaceGC } from './lifecycle/workspace-gc.js';
 import { OutboxConsumer } from './mailbox/outbox-consumer.js';
 import { MailboxProducer, RedisDedupStore, RedisDeliveryGuard, type StreamsClient } from './mailbox/redis-stores.js';
 import { startHealthServer } from './observability/health.js';
@@ -30,6 +33,27 @@ import { DockerRuntime } from './runtime/docker-runtime.js';
 import { K8sRuntime, type PodApi } from './runtime/k8s-runtime.js';
 import { SlackGateway, type RouterRef } from './slack/gateway.js';
 import { EventRouter } from './slack/router.js';
+
+/**
+ * Schedules `tick` on `intervalMs`, catching and logging so a failing tick never becomes an
+ * unhandled rejection. `intervalMs === 0` disables the loop entirely: no timer is created.
+ * LivenessMonitor, MailboxSweeper, and WorkspaceGC own no timer themselves, unlike IdleReaper,
+ * so this plays the scheduling role its `start()` method plays, sharing the same abort signal
+ * so every timer clears together on shutdown.
+ */
+function scheduleTick(
+  intervalMs: number,
+  signal: AbortSignal,
+  log: Logger,
+  label: string,
+  tick: () => Promise<unknown>,
+): void {
+  if (intervalMs === 0) return;
+  const timer = setInterval(() => {
+    void tick().catch((err) => log.error({ err }, `${label} tick failed`));
+  }, intervalMs);
+  signal.addEventListener('abort', () => clearInterval(timer), { once: true });
+}
 
 function makeRuntime(cfg: Config): AgentRuntime {
   if (cfg.RUNTIME === 'k8s') {
@@ -84,6 +108,15 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
   const reconciler = new Reconciler({ registry, runtime, log },
     { runtime: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT });
 
+  const liveness = new LivenessMonitor({ registry, runtime, redis, log, events, metrics }, cfg.HEARTBEAT_GRACE_MS);
+  const sweeper = new MailboxSweeper({ registry, mailbox: redis, supervisor, drain, log, events });
+  const workspaceGc = new WorkspaceGC({ root: cfg.WORKSPACES_ROOT, registry, log, events }, cfg.WORKSPACES_MAX_MB);
+  // Resuming from drain makes the "queued threads are picked up automatically" promise
+  // honest: it sweeps immediately rather than waiting for the next sweep interval.
+  drain.onResume(() => {
+    void sweeper.sweep().catch((err) => log.error({ err }, 'resume sweep failed'));
+  });
+
   const capabilities = new PostgresCapabilitiesRepo(pool);
   const snapshots = new SnapshotBuilder({
     registry, runtime, capabilities, redis,
@@ -110,13 +143,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       postgres: () => pool.query('SELECT 1'),
       runtime: () => runtime.list(),
     },
-    // Placeholder until WorkspaceGC lands: real usage will be wired in as () => gc.usage().
-    workspaces: async () => ({
-      totalBytes: 0,
-      capBytes: cfg.WORKSPACES_MAX_MB * 1024 * 1024,
-      count: 0,
-      oldestTouchedAt: null,
-    }),
+    workspaces: () => workspaceGc.usage(),
   });
 
   return {
@@ -158,6 +185,9 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       if (cfg.DASHBOARD_ENABLED) hub.start();
       outboxDone = outbox.run(ac.signal).catch((err) => log.error({ err }, 'outbox consumer terminated'));
       reaper.start(cfg.REAPER_INTERVAL_MS, ac.signal);
+      scheduleTick(cfg.LIVENESS_INTERVAL_MS, ac.signal, log, 'liveness', () => liveness.tick());
+      scheduleTick(cfg.SWEEP_INTERVAL_MS, ac.signal, log, 'sweep', () => sweeper.sweep());
+      scheduleTick(cfg.WORKSPACE_GC_INTERVAL_MS, ac.signal, log, 'workspace gc', () => workspaceGc.collect());
       sampler = setInterval(() => {
         void registry.countByStatus('running')
           .then((n) => metrics.activeAgents.set(n))
