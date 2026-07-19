@@ -89,7 +89,7 @@ export class LivenessMonitor {
 ```
 
 **Behavior:** for each row from `listByStatus('running')`:
-1. If the row started less than `heartbeatGraceMs` ago, skip it. A booting container has not written its first heartbeat and is not wedged.
+1. **Superseded before implementation, do not build this:** "if the row started less than `heartbeatGraceMs` ago, skip it" used spawn time as the grace reference. That is defeated: it does not distinguish a booting container from one that stays wedged forever, and a variant keyed off `updatedAt` fares no better, since `registry.upsertActivity` bumps `updatedAt` on every inbound Slack message, so a user who keeps messaging a crashed or wedged thread would keep it inside the window forever. See the spec's Liveness section for the mechanism actually built: the monitor tracks its own map of first-sighting times, per thread, and measures the grace from the first tick that observed the row unhealthy, not from any registry timestamp.
 2. `runtime.inspect(handle)`: `null` gives cause `container_gone`; `running: false` gives `container_exited`.
 3. Otherwise check `redis.exists(heartbeatKey(threadKey))`. Zero gives cause `heartbeat_stale`, and in this case only, call `runtime.stop(handle)` first so the wedged container does not linger. Tolerate a stop failure and continue.
 4. On any cause: `setStatus(threadKey, 'stopped', { containerId: null, containerName: null })` then publish `agent_died` with the cause.

@@ -44,11 +44,4 @@ export class IdleReaper {
     }
     return idle.length;
   }
-
-  start(intervalMs: number, signal: AbortSignal): void {
-    const timer = setInterval(() => {
-      void this.tick().catch((err) => this.deps.log.error({ err }, 'reaper tick failed'));
-    }, intervalMs);
-    signal.addEventListener('abort', () => clearInterval(timer), { once: true });
-  }
 }

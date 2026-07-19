@@ -24,9 +24,16 @@ const consumer = new MailboxConsumer(
   log,
 );
 
-const heartbeat = setInterval(() => {
+// Written immediately, not just on the first interval firing: LivenessMonitor's grace is
+// scoped to this container's own life, but that life starts counting the moment the row
+// reads 'running', not ten seconds later. Waiting a full interval for the first write would
+// leave a window right after boot with no heartbeat key at all, indistinguishable from a
+// truly wedged agent to any tick that lands in it.
+const writeHeartbeat = (): void => {
   redis.set(heartbeatKey(env.THREAD_KEY), '1', 'EX', 30).catch(() => {});
-}, 10_000);
+};
+writeHeartbeat();
+const heartbeat = setInterval(writeHeartbeat, 10_000);
 
 const ac = new AbortController();
 process.on('SIGTERM', () => ac.abort());

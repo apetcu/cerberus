@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import pino from 'pino';
+import { heartbeatKey } from '@cerberus/protocol';
 import { MemoryThreadRegistry } from '../src/registry/memory-thread-registry.js';
 import { agentName, type AgentHandle, type AgentRuntime } from '../src/runtime/agent-runtime.js';
 import { LivenessMonitor } from '../src/lifecycle/liveness.js';
@@ -65,7 +66,7 @@ describe('LivenessMonitor', () => {
     expect(runtime.stopped).toEqual([]);
   });
 
-  it('marks an exited container stopped with container_exited once the grace elapses', async () => {
+  it('marks an exited container stopped with container_exited once the grace elapses, and removes it', async () => {
     const registry = new MemoryThreadRegistry();
     let now = new Date();
     await seed(registry, THREAD);
@@ -85,7 +86,9 @@ describe('LivenessMonitor', () => {
     expect(events.publish).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent_died', threadKey: THREAD, cause: 'container_exited' }),
     );
-    expect(runtime.stopped).toEqual([]);
+    // An exited container still holds its writable layer until removed: left alone it would
+    // linger until the thread happens to respawn, or forever if it never does.
+    expect(runtime.stopped).toEqual([name]);
   });
 
   it('stops the container and marks heartbeat_stale once a missing heartbeat has persisted through the grace', async () => {
@@ -265,5 +268,122 @@ describe('LivenessMonitor', () => {
     expect(events.publish).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent_died', threadKey: THREAD, cause: 'container_gone' }),
     );
+  });
+
+  it('resets the grace when the row respawns under a new container id before the old grace elapsed', async () => {
+    // Reproduces the bug this fix closes: a crashed thread is recorded unhealthy at t0. A
+    // user message respawns it before the grace elapses. The row reads `running` across
+    // ticks (the `provisioning` interlude is far shorter than a tick) and the new agent has
+    // not written its first heartbeat yet. Without scoping the grace to the container's
+    // identity, a tick landing after the *original* since plus the grace, but before the new
+    // container's first heartbeat, would read the stale entry, see its grace already
+    // elapsed, and stop the perfectly healthy new container.
+    const registry = new MemoryThreadRegistry();
+    let now = new Date();
+    await seed(registry, THREAD); // containerId 'c': the container that is about to crash
+    const name = agentName(THREAD);
+    let inspectResult: AgentHandle | null = null; // original container: gone
+    const runtime = makeRuntime(vi.fn(async () => inspectResult));
+    let heartbeat = 0;
+    const redis = { exists: vi.fn(async () => heartbeat) };
+    const events = { publish: vi.fn() };
+    const monitor = new LivenessMonitor(
+      { registry, runtime, redis, log, events: events as any, now: () => now },
+      GRACE_MS,
+    );
+
+    expect(await monitor.tick()).toBe(0); // first sighting of the crash: container_gone, since = t0
+
+    // Before the original grace elapses, the thread respawns under a new container id. The
+    // new container is up but has not written its first heartbeat yet.
+    now = new Date(now.getTime() + GRACE_MS - 1000);
+    await registry.setStatus(THREAD, 'running', { containerId: 'new-container', containerName: name });
+    inspectResult = { id: 'new-container', name, threadKey: THREAD, running: true };
+
+    // Wall-clock time since the *original* sighting has already crossed the grace, but the
+    // new container must not be touched: it is a different life and has not even had its
+    // first sighting recorded.
+    expect(await monitor.tick()).toBe(0);
+    expect((await registry.get(THREAD))!.status).toBe('running');
+    expect(events.publish).not.toHaveBeenCalled();
+    expect(runtime.stopped).toEqual([]);
+
+    // The new container's own grace has not elapsed yet either.
+    now = new Date(now.getTime() + GRACE_MS / 2);
+    expect(await monitor.tick()).toBe(0);
+    expect((await registry.get(THREAD))!.status).toBe('running');
+
+    // Only once the grace has elapsed from the *new* sighting is it finally acted on.
+    now = new Date(now.getTime() + GRACE_MS / 2 + 1000);
+    expect(await monitor.tick()).toBe(1);
+    expect((await registry.get(THREAD))!.status).toBe('stopped');
+    expect(events.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'agent_died', threadKey: THREAD, cause: 'heartbeat_stale' }),
+    );
+  });
+
+  it('treats a running row with no container name as unhealthy with cause container_gone', async () => {
+    // Such a row can never be inspected, so left alone it would sit invisible, and still
+    // counting against the concurrency cap, forever; only boot-time reconciliation would
+    // ever correct it. There is demonstrably no container to find.
+    const registry = new MemoryThreadRegistry();
+    let now = new Date();
+    await registry.upsertActivity({
+      threadKey: THREAD, teamId: 'T1', channelId: 'C1', threadTs: THREAD.split('-')[2]!,
+      runtime: 'docker', workspacePath: `/w/${THREAD}`,
+    });
+    await registry.setStatus(THREAD, 'running'); // no ids given: containerName stays null
+    const runtime = makeRuntime(vi.fn());
+    const redis = { exists: vi.fn(async () => 1) };
+    const events = { publish: vi.fn() };
+    const monitor = new LivenessMonitor(
+      { registry, runtime, redis, log, events: events as any, now: () => now },
+      GRACE_MS,
+    );
+
+    expect(await monitor.tick()).toBe(0); // first sighting only
+    expect(runtime.inspect).not.toHaveBeenCalled(); // nothing to inspect
+
+    now = new Date(now.getTime() + GRACE_MS + 1000);
+    expect(await monitor.tick()).toBe(1);
+    expect((await registry.get(THREAD))!.status).toBe('stopped');
+    expect(events.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'agent_died', threadKey: THREAD, cause: 'container_gone' }),
+    );
+  });
+
+  it('does not abort the tick when redis.exists throws, but still processes the next row', async () => {
+    const registry = new MemoryThreadRegistry();
+    let now = new Date();
+    const okThread = 'T1-C1-9.9';
+    await seed(registry, THREAD);
+    await seed(registry, okThread);
+    const throwingKey = heartbeatKey(THREAD);
+    const runtime = makeRuntime(vi.fn(async (name: string) =>
+      ({ id: 'c', name, threadKey: name === agentName(THREAD) ? THREAD : okThread, running: true })));
+    const redis = {
+      exists: vi.fn(async (key: string) => {
+        if (key === throwingKey) throw new Error('redis unreachable');
+        return 0; // okThread has no heartbeat either: unhealthy, should still be processed
+      }),
+    };
+    const events = { publish: vi.fn() };
+    const errorSpy = vi.spyOn(log, 'error');
+    const monitor = new LivenessMonitor(
+      { registry, runtime, redis, log, events: events as any, now: () => now },
+      GRACE_MS,
+    );
+
+    expect(await monitor.tick()).toBe(0); // first sighting of okThread; THREAD's redis check keeps throwing
+    now = new Date(now.getTime() + GRACE_MS + 1000);
+    expect(await monitor.tick()).toBe(1);
+    expect((await registry.get(THREAD))!.status).toBe('running'); // untouched: redis kept throwing
+    expect((await registry.get(okThread))!.status).toBe('stopped');
+    expect(events.publish).toHaveBeenCalledTimes(1);
+    expect(events.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ threadKey: okThread, kind: 'agent_died', cause: 'heartbeat_stale' }),
+    );
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

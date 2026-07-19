@@ -87,6 +87,8 @@ export interface WorkspaceGCDeps {
   events?: EventBus;
   /** Injected for tests; defaults to node:fs/promises. */
   fs?: WorkspaceFs;
+  /** Injected for tests; defaults to the system clock. */
+  now?: () => Date;
 }
 
 interface WorkspaceEntry {
@@ -127,10 +129,26 @@ const EVICTABLE_STATUSES: ReadonlySet<ThreadStatus> = new Set(['stopped', 'faile
  * satisfy a number.
  */
 export class WorkspaceGC {
+  /**
+   * How long a `usage()` snapshot is served from cache before the workspace tree is walked
+   * again. SystemView polls `/api/system` every 5 seconds, and each poll previously drove a
+   * full recursive readdir and stat of everything under `WORKSPACES_ROOT`: a constant I/O
+   * tax competing with the agents for the same disk, for every open console. 30 seconds is
+   * long enough to cut that tax by roughly 6x for the common case of one open console
+   * polling continuously, while staying short enough that disk pressure shown in the
+   * console is never stale by more than half a minute, well inside the timescale an operator
+   * reacts on.
+   */
+  private static readonly USAGE_CACHE_TTL_MS = 30_000;
+
   private readonly fs: WorkspaceFs;
+  private readonly now: () => Date;
+  private cachedUsage: WorkspaceUsage | null = null;
+  private cachedAtMs = 0;
 
   constructor(private readonly deps: WorkspaceGCDeps, private readonly maxMb: number) {
     this.fs = deps.fs ?? nodeWorkspaceFs;
+    this.now = deps.now ?? (() => new Date());
   }
 
   private get capBytes(): number {
@@ -154,8 +172,17 @@ export class WorkspaceGC {
     return entries;
   }
 
-  /** Reports current usage: total bytes, the configured cap, workspace count, and the oldest touch time. */
+  /**
+   * Reports current usage: total bytes, the configured cap, workspace count, and the oldest
+   * touch time. Served from cache within `USAGE_CACHE_TTL_MS` of the last real walk rather
+   * than re-reading the filesystem on every call; see that constant for why.
+   */
   async usage(): Promise<WorkspaceUsage> {
+    const nowMs = this.now().getTime();
+    if (this.cachedUsage && nowMs - this.cachedAtMs < WorkspaceGC.USAGE_CACHE_TTL_MS) {
+      return this.cachedUsage;
+    }
+
     const entries = await this.listEntries();
     const totalBytes = entries.reduce((sum, e) => sum + e.bytes, 0);
     const count = entries.length;
@@ -164,7 +191,10 @@ export class WorkspaceGC {
       : entries
         .reduce((oldest, e) => (e.lastTouchedAt < oldest ? e.lastTouchedAt : oldest), entries[0]!.lastTouchedAt)
         .toISOString();
-    return { totalBytes, capBytes: this.capBytes, count, oldestTouchedAt };
+    const usage: WorkspaceUsage = { totalBytes, capBytes: this.capBytes, count, oldestTouchedAt };
+    this.cachedUsage = usage;
+    this.cachedAtMs = nowMs;
+    return usage;
   }
 
   /** True when this directory may be deleted right now: orphan, or an evictable status. */
@@ -236,6 +266,11 @@ export class WorkspaceGC {
         'workspace GC could not reach the cap: every remaining workspace over the limit belongs to a thread that is not evictable',
       );
     }
+
+    // A cached usage() snapshot taken before this run would understate disk freed by every
+    // delete above; drop it so the very next usage() call re-walks the tree instead of
+    // showing the console stale numbers right after a deletion.
+    if (reclaimed > 0) this.cachedUsage = null;
 
     return reclaimed;
   }

@@ -17,6 +17,7 @@ import { DrainState } from './lifecycle/drain.js';
 import { LivenessMonitor } from './lifecycle/liveness.js';
 import { IdleReaper } from './lifecycle/reaper.js';
 import { Reconciler } from './lifecycle/reconciler.js';
+import { scheduleTick } from './lifecycle/schedule-tick.js';
 import { ThreadSupervisor } from './lifecycle/supervisor.js';
 import { MailboxSweeper } from './lifecycle/sweeper.js';
 import { WorkspaceGC } from './lifecycle/workspace-gc.js';
@@ -33,27 +34,6 @@ import { DockerRuntime } from './runtime/docker-runtime.js';
 import { K8sRuntime, type PodApi } from './runtime/k8s-runtime.js';
 import { SlackGateway, type RouterRef } from './slack/gateway.js';
 import { EventRouter } from './slack/router.js';
-
-/**
- * Schedules `tick` on `intervalMs`, catching and logging so a failing tick never becomes an
- * unhandled rejection. `intervalMs === 0` disables the loop entirely: no timer is created.
- * LivenessMonitor, MailboxSweeper, and WorkspaceGC own no timer themselves, unlike IdleReaper,
- * so this plays the scheduling role its `start()` method plays, sharing the same abort signal
- * so every timer clears together on shutdown.
- */
-function scheduleTick(
-  intervalMs: number,
-  signal: AbortSignal,
-  log: Logger,
-  label: string,
-  tick: () => Promise<unknown>,
-): void {
-  if (intervalMs === 0) return;
-  const timer = setInterval(() => {
-    void tick().catch((err) => log.error({ err }, `${label} tick failed`));
-  }, intervalMs);
-  signal.addEventListener('abort', () => clearInterval(timer), { once: true });
-}
 
 function makeRuntime(cfg: Config): AgentRuntime {
   if (cfg.RUNTIME === 'k8s') {
@@ -188,7 +168,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       });
       if (cfg.DASHBOARD_ENABLED) hub.start();
       outboxDone = outbox.run(ac.signal).catch((err) => log.error({ err }, 'outbox consumer terminated'));
-      reaper.start(cfg.REAPER_INTERVAL_MS, ac.signal);
+      scheduleTick(cfg.REAPER_INTERVAL_MS, ac.signal, log, 'reaper', () => reaper.tick());
       scheduleTick(cfg.LIVENESS_INTERVAL_MS, ac.signal, log, 'liveness', () => liveness.tick());
       scheduleTick(cfg.SWEEP_INTERVAL_MS, ac.signal, log, 'sweep', () => sweeper.sweep());
       scheduleTick(cfg.WORKSPACE_GC_INTERVAL_MS, ac.signal, log, 'workspace gc', () => workspaceGc.collect());

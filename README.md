@@ -12,7 +12,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-unlicensed-lightgrey">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-339933">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-131%20unit%20%2B%2023%20integration-34d399">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-200%20unit%20%2B%2032%20integration-34d399">
   <img alt="Runtime" src="https://img.shields.io/badge/runtime-Docker%20%7C%20Kubernetes-38bdf8">
   <img alt="Status" src="https://img.shields.io/badge/status-working%2C%20stub%20brain-fbbf24">
 </p>
@@ -435,8 +435,8 @@ Prometheus metrics on `/metrics`:
 ## Testing
 
 ```bash
-pnpm test              # 131 unit tests, server and browser
-pnpm test:integration  # 23 tests against real Redis, Postgres, and Docker
+pnpm test              # 200 unit tests, server and browser
+pnpm test:integration  # 32 tests against real Redis, Postgres, and Docker
 pnpm typecheck
 ```
 

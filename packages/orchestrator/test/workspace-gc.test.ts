@@ -298,4 +298,52 @@ describe('WorkspaceGC', () => {
 
     expect(usage).toEqual({ totalBytes: 0, capBytes: 10 * MB, count: 0, oldestTouchedAt: null });
   });
+
+  it('serves usage() from cache within the TTL instead of re-walking the filesystem', async () => {
+    const fs = new FakeFs(new Map([
+      ['A', { bytes: 1 * MB, dirMtimeMs: daysAgo(1) }],
+    ]));
+    const registry = new MemoryThreadRegistry();
+    let now = new Date();
+    const gc = new WorkspaceGC({ root: ROOT, registry, locks: makeLocks(), log, fs, now: () => now }, 10);
+
+    const first = await gc.usage();
+    expect(fs.listDirsCalls).toBe(1);
+
+    // Still inside the 30 second TTL: served from cache, no second walk.
+    now = new Date(now.getTime() + 29_000);
+    const second = await gc.usage();
+    expect(second).toEqual(first);
+    expect(fs.listDirsCalls).toBe(1);
+
+    // Past the TTL: the tree is walked again.
+    now = new Date(now.getTime() + 2000);
+    await gc.usage();
+    expect(fs.listDirsCalls).toBe(2);
+  });
+
+  it('invalidates the usage() cache once collect() actually evicts something', async () => {
+    const fs = new FakeFs(new Map([
+      ['OLD', { bytes: 8 * MB, dirMtimeMs: daysAgo(30) }],
+    ]));
+    const registry = new MemoryThreadRegistry();
+    await seed(registry, 'OLD', 'stopped');
+    const events = { publish: () => {} } as unknown as EventBus;
+    const now = new Date();
+    const gc = new WorkspaceGC({ root: ROOT, registry, locks: makeLocks(), log, events, fs, now: () => now }, 5); // cap 5 MB
+
+    const before = await gc.usage();
+    expect(before.totalBytes).toBe(8 * MB);
+    expect(fs.listDirsCalls).toBe(1);
+
+    const reclaimed = await gc.collect(); // collect() does its own walk, independent of the cache
+    expect(reclaimed).toBe(8 * MB);
+    expect(fs.listDirsCalls).toBe(2);
+
+    // Same instant, well inside the TTL: a cache that survived the eviction would still
+    // report the pre-deletion total, showing the console stale numbers right after a delete.
+    const after = await gc.usage();
+    expect(after.totalBytes).toBe(0);
+    expect(fs.listDirsCalls).toBe(3);
+  });
 });

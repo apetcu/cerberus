@@ -112,7 +112,7 @@ Last-touched comes from the `conversation.json` mtime, which the agent rewrites 
 | Variable | Default | Meaning |
 |---|---|---|
 | `LIVENESS_INTERVAL_MS` | 15000 | Liveness tick. 0 disables. |
-| `HEARTBEAT_GRACE_MS` | 60000 | How long after spawn before a missing heartbeat counts as wedged. |
+| `HEARTBEAT_GRACE_MS` | 60000 | How long a row must look continuously unhealthy, scoped to one container's life, before it is marked dead. |
 | `SWEEP_INTERVAL_MS` | 20000 | Sweeper tick. 0 disables. |
 | `WORKSPACE_GC_INTERVAL_MS` | 300000 | GC tick, five minutes. 0 disables. |
 | `WORKSPACES_MAX_MB` | 10240 | Disk cap. 0 disables the GC. |
