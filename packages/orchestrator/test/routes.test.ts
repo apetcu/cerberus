@@ -1,9 +1,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import pino from 'pino';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { capabilitiesSchema, type AgentDetail, type OverviewSnapshot } from '@cerberus/protocol';
-import { createApiHandler, type ApiDeps } from '../src/api/routes.js';
+import { createApiHandler, isAuthorized, type ApiDeps } from '../src/api/routes.js';
 
 const log = pino({ level: 'silent' });
 const KEY = 'T1-C1-1.2';
@@ -105,5 +105,41 @@ describe('api routes', () => {
   it('returns false (unhandled) for non-api paths', async () => {
     await serve(makeDeps());
     expect((await fetch(`${base}/healthz`)).status).toBe(404); // our test server's fallthrough
+  });
+
+  it('rejects an oversized body with 413 without buffering it', async () => {
+    await serve(makeDeps());
+    const huge = JSON.stringify({ model: 'x'.repeat(100_000) });
+    const res = await fetch(`${base}/api/threads/${KEY}/capabilities`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: huge,
+    });
+    expect(res.status).toBe(413);
+  });
+
+  it('returns 400 for malformed json rather than 500', async () => {
+    await serve(makeDeps());
+    const res = await fetch(`${base}/api/threads/${KEY}/capabilities`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{not json',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('does not accept a query-param token on REST routes', async () => {
+    await serve(makeDeps({ token: 'sekret' }));
+    expect((await fetch(`${base}/api/overview?token=sekret`)).status).toBe(401);
+    const ok = await fetch(`${base}/api/overview`, { headers: { authorization: 'Bearer sekret' } });
+    expect(ok.status).toBe(200);
+  });
+
+  it('accepts a query-param token only when explicitly allowed (ws handshake path)', () => {
+    const req = { headers: {}, url: '/api/stream?token=sekret' } as never;
+    expect(isAuthorized(req, 'sekret')).toBe(false);
+    expect(isAuthorized(req, 'sekret', { allowQueryToken: true })).toBe(true);
+  });
+
+  it('rejects a wrong bearer token', async () => {
+    await serve(makeDeps({ token: 'sekret' }));
+    expect((await fetch(`${base}/api/overview`, { headers: { authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect((await fetch(`${base}/api/overview`, { headers: { authorization: 'Bearer sekretsekret' } })).status).toBe(401);
   });
 });
