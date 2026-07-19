@@ -245,7 +245,7 @@ export class DashboardHub {
       }
       flushBatch();
       if (!controller.signal.aborted) {
-        this.send(client, { type: 'log_end', channel, reason: 'stream closed' });
+        this.send(client, { type: 'log_end', channel, reason: await this.endReason(handle) });
       }
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -258,6 +258,22 @@ export class DashboardHub {
       // controller for this channel, and deleting it would orphan a live stream.
       if (client.logStreams.get(channel) === controller) client.logStreams.delete(channel);
     }
+  }
+
+  /**
+   * Explains why a log stream ended. Docker closes the stream immediately for a container
+   * that has already exited, and reporting that as "stream closed" tells an operator
+   * nothing — re-inspect so the drawer can say what actually happened.
+   */
+  private async endReason(handle: AgentHandle): Promise<string> {
+    try {
+      const current = await this.deps.runtime.inspect(handle.name);
+      if (!current) return 'container was removed';
+      if (!current.running) return 'container exited — restart the agent to resume streaming';
+    } catch (err) {
+      this.deps.log.warn({ err, container: handle.name }, 'could not determine why the log stream ended');
+    }
+    return 'log stream closed';
   }
 
   private stopLogStream(client: Client, channel: string): void {

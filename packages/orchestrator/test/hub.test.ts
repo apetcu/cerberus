@@ -22,15 +22,27 @@ class FakeSocket implements HubSocket {
 
 function makeHub(
   logLines: string[] = [],
-  opts: { detail?: unknown; registryGet?: () => Promise<unknown> } = {},
+  opts: {
+    detail?: unknown;
+    registryGet?: () => Promise<unknown>;
+    /** End the log stream instead of holding it open, as Docker does for an exited container. */
+    endStream?: boolean;
+    /** What runtime.inspect reports after the stream ends. */
+    inspectAfterEnd?: { id: string; name: string; threadKey: string; running: boolean } | null;
+  } = {},
 ) {
   const events = new EventBus();
   const aborted: AbortSignal[] = [];
+  let logsFinished = false;
   const runtime = {
-    inspect: vi.fn(async () => ({ id: 'c1', name: 'cerberus-agent-x', threadKey: KEY, running: true })),
+    inspect: vi.fn(async () =>
+      logsFinished && opts.inspectAfterEnd !== undefined
+        ? opts.inspectAfterEnd
+        : { id: 'c1', name: 'cerberus-agent-x', threadKey: KEY, running: true }),
     logs: vi.fn(async function* (_h: unknown, o: { signal?: AbortSignal }) {
       if (o.signal) aborted.push(o.signal);
       for (const line of logLines) yield line;
+      if (opts.endStream) { logsFinished = true; return; }
       await new Promise(() => {}); // stay open like a follow stream
     }),
   } as never;
@@ -118,6 +130,29 @@ describe('DashboardHub', () => {
     await flush();
     hub.stop();
     expect(aborted[0]!.aborted).toBe(true);
+  });
+
+  it('says the container exited rather than a bare "stream closed"', async () => {
+    const { hub } = makeHub(['last line'], {
+      endStream: true,
+      inspectAfterEnd: { id: 'c1', name: 'cerberus-agent-x', threadKey: KEY, running: false },
+    });
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(logsChannel(KEY));
+    await flush(120);
+    const end = socket.ofType('log_end')[0] as { reason: string } | undefined;
+    expect(end?.reason).toContain('container exited');
+  });
+
+  it('says the container was removed when it no longer exists', async () => {
+    const { hub } = makeHub(['last line'], { endStream: true, inspectAfterEnd: null });
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    socket.subscribe(logsChannel(KEY));
+    await flush(120);
+    const end = socket.ofType('log_end')[0] as { reason: string } | undefined;
+    expect(end?.reason).toBe('container was removed');
   });
 
   it('aborts log streams when the socket closes', async () => {
