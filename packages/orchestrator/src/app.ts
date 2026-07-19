@@ -46,6 +46,12 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
   // individually in SnapshotBuilder instead, where a stall must degrade one field only.
   const redisRaw = new Redis(cfg.REDIS_URL, { maxRetriesPerRequest: null });
   const redis = redisRaw as unknown as StreamsClient;
+  // The outbox consumer parks on XREADGROUP ... BLOCK for seconds at a time, and a blocking
+  // command owns its whole connection: every other command queues behind it. Sharing one
+  // connection made dashboard reads (xlen/exists) miss their deadline and report a stale
+  // heartbeat and an empty mailbox on a healthy agent. Blocking reads get their own socket.
+  const redisBlockingRaw = redisRaw.duplicate();
+  const redisBlocking = redisBlockingRaw as unknown as StreamsClient;
   const metrics = new Metrics();
   const events = new EventBus();
 
@@ -68,7 +74,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     dedup: new RedisDedupStore(redis), producer, supervisor, poster: gateway, reactor: gateway, log, metrics, events,
   });
 
-  const outbox = new OutboxConsumer(redis, gateway, new RedisDeliveryGuard(redis), log);
+  const outbox = new OutboxConsumer(redisBlocking, gateway, new RedisDeliveryGuard(redis), log);
   const reaper = new IdleReaper({ registry, runtime, producer, log, metrics, events }, cfg.IDLE_TIMEOUT_MS);
   const reconciler = new Reconciler({ registry, runtime, log },
     { runtime: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT });
@@ -149,6 +155,7 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       for (const client of wss.clients) client.terminate();
       wss.close();
       await health?.close();
+      redisBlockingRaw.disconnect();
       redisRaw.disconnect();
       await pool.end();
     },
