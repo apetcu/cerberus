@@ -11,7 +11,7 @@ export function AppShell({ title, subtitle, actions, children }: {
     <div className="flex h-full">
       <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface/60 px-4 py-5 lg:flex">
         <div className="flex items-center gap-2">
-          <span className="grid size-7 place-items-center rounded-md bg-accent/15 text-sm">🐕</span>
+          <img src="/logo.svg" alt="" width={28} height={28} className="size-7" />
           <span className="font-semibold tracking-tight">Cerberus</span>
         </div>
         <div className="mt-8 label">Fleet</div>
