@@ -109,6 +109,17 @@ describe('DashboardHub', () => {
     expect(aborted[0]!.aborted).toBe(true);
   });
 
+  it('aborts log streams on stop() so no runtime connection outlives the hub', async () => {
+    const { hub, aborted } = makeHub(['x']);
+    const socket = new FakeSocket();
+    hub.addClient(socket);
+    hub.start();
+    socket.subscribe(logsChannel(KEY));
+    await flush();
+    hub.stop();
+    expect(aborted[0]!.aborted).toBe(true);
+  });
+
   it('aborts log streams when the socket closes', async () => {
     const { hub, aborted } = makeHub(['x']);
     const socket = new FakeSocket();

@@ -64,15 +64,20 @@ export class DashboardHub {
   }
 
   stop(): void {
-    // Pauses the background machinery only (reconcile tick + event-driven flushes).
-    // Connected clients are left alone: they are torn down by their own socket 'close'
-    // event or the unsubscribe function addClient() returns, not by stop(), so a
-    // stop()/start() cycle can resume pushing to sockets that stayed open throughout.
+    // Pauses the background machinery (reconcile tick + event-driven flushes) and releases
+    // every in-flight log stream, since each one holds an open connection to the container
+    // runtime. Clients themselves stay registered — they are torn down by their own socket
+    // 'close' event or the unsubscribe function addClient() returns — so a stop()/start()
+    // cycle can resume pushing to sockets that stayed open throughout.
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (this.debounce) clearTimeout(this.debounce);
     this.unsubscribeEvents?.();
     this.unsubscribeEvents = null;
+    for (const client of this.clients) {
+      for (const controller of client.logStreams.values()) controller.abort();
+      client.logStreams.clear();
+    }
   }
 
   addClient(socket: HubSocket): () => void {
