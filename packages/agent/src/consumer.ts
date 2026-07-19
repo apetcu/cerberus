@@ -16,6 +16,9 @@ const CONSUMER = 'main';
 type StreamReply = [string, [string, string[]][]][] | null;
 
 export class MailboxConsumer {
+  /** Controls published before this container booted are leftovers from a previous incarnation. */
+  private readonly startedAt = Date.now();
+
   constructor(
     private readonly redis: StreamsClient,
     private readonly brain: Brain,
@@ -72,8 +75,16 @@ export class MailboxConsumer {
     }
     let result: 'processed' | 'shutdown' = 'processed';
     if (msg.kind === 'control') {
-      this.log.info(`control message received: ${msg.control ?? 'unknown'}`);
-      if (msg.control === 'shutdown') result = 'shutdown';
+      const publishedAt = Number(msg.ts);
+      const stale = Number.isFinite(publishedAt) && publishedAt > 0 && publishedAt < this.startedAt;
+      if (msg.control === 'shutdown' && stale) {
+        // Left in the mailbox by a reap whose container had already exited. Honoring it would
+        // kill this freshly spawned agent right after its first reply.
+        this.log.info(`ignoring stale shutdown control published at ${new Date(publishedAt).toISOString()}`);
+      } else {
+        this.log.info(`control message received: ${msg.control ?? 'unknown'}`);
+        if (msg.control === 'shutdown') result = 'shutdown';
+      }
     } else {
       // Processing errors propagate: the entry stays unacked and is replayed by
       // drainPending() after the container restarts (crash mid-message → redelivery).

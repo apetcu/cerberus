@@ -123,4 +123,17 @@ describe('MailboxConsumer', () => {
     const history = await new WorkspaceStore(root).load();
     expect(history.filter((e) => e.role === 'user')).toHaveLength(1);
   });
+
+  it('ignores a shutdown control published before this container started', async () => {
+    const staleTs = String(Date.now() - 60_000);
+    redis.push({ id: 'c-old', threadKey: KEY, kind: 'control', control: 'shutdown', ts: staleTs });
+    expect(await consumer.runOnce(1)).toBe('processed'); // not 'shutdown'
+    expect(redis.acked).toEqual(['1-0']);                // still acked, not left pending
+  });
+
+  it('honors a shutdown control published after this container started', async () => {
+    const freshTs = String(Date.now() + 5_000);
+    redis.push({ id: 'c-new', threadKey: KEY, kind: 'control', control: 'shutdown', ts: freshTs });
+    expect(await consumer.runOnce(1)).toBe('shutdown');
+  });
 });
