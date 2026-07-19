@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b0c0e;
+  --color-surface: #131519;
+  --color-raised: #1a1d23;
+  --color-line: #23262d;
+  --color-line-strong: #2e323a;
+  --color-ink: #e6e8eb;
+  --color-muted: #9ba1aa;
+  --color-dim: #6b717b;
+  --color-accent: #38bdf8;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-busy: #fb923c;
+  --color-idle: #6b717b;
+  --color-bad: #f87171;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tiny uppercase legend labels, per the Neon reference. */
+.label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+.pulse { animation: pulse-dot 1.6s ease-in-out infinite; }

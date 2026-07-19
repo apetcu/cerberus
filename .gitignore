@@ -4,3 +4,4 @@ workspaces/
 *.log
 .superpowers/
 .env.temp
+packages/dashboard/dist/
