@@ -15,19 +15,22 @@ export function CapabilityPanel({ threadKey, initial }: { threadKey: string; ini
   const [draft, setDraft] = useState<Capabilities>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<string | null>(initial.updatedAt);
+  // The baseline `dirty` is compared against: starts at `initial`, then advances to whatever
+  // was last saved so the Save button re-disables instead of staying dirty on its own updatedAt.
+  const [saved, setSaved] = useState<Capabilities>(initial);
 
-  useEffect(() => { setDraft(initial); setSavedAt(initial.updatedAt); }, [threadKey]);
+  useEffect(() => { setDraft(initial); setSaved(initial); }, [threadKey]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify({ ...initial, updatedAt: initial.updatedAt });
+  const omitStamp = (c: Capabilities) => JSON.stringify({ ...c, updatedAt: null });
+  const dirty = omitStamp(draft) !== omitStamp(saved);
 
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      const saved = await api.putCapabilities(threadKey, capabilitiesSchema.parse(draft));
-      setDraft(saved);
-      setSavedAt(saved.updatedAt);
+      const result = await api.putCapabilities(threadKey, capabilitiesSchema.parse(draft));
+      setDraft(result);
+      setSaved(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'save failed');
     } finally {
@@ -94,8 +97,8 @@ export function CapabilityPanel({ threadKey, initial }: { threadKey: string; ini
           {saving ? 'Saving…' : 'Save'}
         </button>
         {error && <span className="text-xs text-bad">{error}</span>}
-        {!error && savedAt && (
-          <span className="text-xs text-dim">Saved {new Date(savedAt).toLocaleTimeString()}</span>
+        {!error && saved.updatedAt && (
+          <span className="text-xs text-dim">Saved {new Date(saved.updatedAt).toLocaleTimeString()}</span>
         )}
       </div>
     </div>

@@ -79,7 +79,9 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
     runtimeName: cfg.RUNTIME, workspacesRoot: cfg.WORKSPACES_ROOT, log,
   });
   const hub = new DashboardHub({ snapshots, registry, runtime, events, log });
-  const wss = new WebSocketServer({ noServer: true });
+  // Client messages are tiny subscribe/unsubscribe envelopes; cap frames so an oversized
+  // payload is rejected by ws rather than buffered.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   const distDir = cfg.DASHBOARD_DIST ||
     resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'dashboard', 'dist');
 

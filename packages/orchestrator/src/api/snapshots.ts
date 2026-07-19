@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import {
   capabilitiesSchema, heartbeatKey, mailboxKey,
   type AgentDetail, type AgentSummary, type ConversationEntry, type OverviewSnapshot,
@@ -43,7 +43,7 @@ export class SnapshotBuilder {
   constructor(private readonly deps: SnapshotDeps) {}
 
   async overview(): Promise<OverviewSnapshot> {
-    const records = await this.deps.registry.listRecent(MAX_AGENTS);
+    const records = await withTimeout(this.deps.registry.listRecent(MAX_AGENTS), [] as ThreadRecord[], 5000);
     const { live, healthy } = await this.liveHandles();
     // allSettled, not all: one malformed record must not blank the whole fleet view.
     const settled = await Promise.allSettled(records.map((r) => this.summarize(r, live)));
@@ -100,7 +100,11 @@ export class SnapshotBuilder {
   /** Live containers keyed by threadKey; `healthy` is false when the runtime is unreachable. */
   private async liveHandles(): Promise<{ live: Map<string, AgentHandle>; healthy: boolean }> {
     try {
-      const handles = await this.deps.runtime.list();
+      const handles = await withTimeout(this.deps.runtime.list(), null as AgentHandle[] | null, 5000);
+      if (handles === null) {
+        this.deps.log.warn('runtime list timed out while building snapshot');
+        return { live: new Map(), healthy: false };
+      }
       return {
         live: new Map(handles.filter((h) => h.running).map((h) => [h.threadKey, h])),
         healthy: true,
@@ -133,11 +137,24 @@ export class SnapshotBuilder {
   }
 
   private async readConversation(workspacePath: string): Promise<ConversationEntry[]> {
+    const root = resolve(this.deps.workspacesRoot);
+    const target = resolve(workspacePath);
+    if (target !== root && !target.startsWith(root + sep)) {
+      this.deps.log.warn({ workspacePath }, 'workspace path outside the configured root; refusing to read');
+      return [];
+    }
     try {
-      const raw = await readFile(join(workspacePath, 'conversation.json'), 'utf8');
-      return JSON.parse(raw) as ConversationEntry[];
+      const raw = await readFile(join(target, 'conversation.json'), 'utf8');
+      const parsed: unknown = JSON.parse(raw);
+      // Defensive: a hand-edited or truncated file must not white-screen the console.
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter(
+        (e): e is ConversationEntry =>
+          typeof e === 'object' && e !== null &&
+          typeof (e as ConversationEntry).id === 'string' &&
+          typeof (e as ConversationEntry).text === 'string',
+      );
     } catch {
-      // No conversation yet, or the workspace is not mounted here — an empty history is correct.
       return [];
     }
   }

@@ -135,6 +135,19 @@ export function useLogChannel(channel: string | null, paused: boolean): LogState
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
 
+  // On reconnect the hub replays a fresh tail from scratch, which would otherwise be appended
+  // to the lines already on screen and duplicate up to LOG_TAIL lines. Clearing on the
+  // reconnecting -> open transition drops the stale tail instead of doubling it up.
+  const status = useConnectionStatus();
+  const prevStatus = useRef(status);
+  useEffect(() => {
+    if (prevStatus.current === 'reconnecting' && status === 'open') {
+      buffer.current = [];
+      setLines([]);
+    }
+    prevStatus.current = status;
+  }, [status]);
+
   useEffect(() => {
     if (!channel) return;
     setLines([]);

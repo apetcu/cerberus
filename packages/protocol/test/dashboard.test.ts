@@ -25,6 +25,10 @@ describe('capabilitiesSchema', () => {
     expect(() => capabilitiesSchema.parse({ cpu: 0 })).toThrow();
     expect(() => capabilitiesSchema.parse({ memoryMb: 10 })).toThrow();
   });
+
+  it('rejects unknown top-level keys', () => {
+    expect(() => capabilitiesSchema.parse({ memory_mb: 2048 })).toThrow();
+  });
 });
 
 describe('ws envelopes', () => {

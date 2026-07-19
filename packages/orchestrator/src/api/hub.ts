@@ -10,7 +10,7 @@ import type { SnapshotBuilder } from './snapshots.js';
 
 export interface HubSocket {
   send(data: string): void;
-  on(event: 'message' | 'close', fn: (payload?: unknown) => void): void;
+  on(event: 'message' | 'close' | 'error', fn: (payload?: unknown) => void): void;
 }
 
 export interface HubDeps {
@@ -72,6 +72,7 @@ export class DashboardHub {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (this.debounce) clearTimeout(this.debounce);
+    this.debounce = null;
     this.unsubscribeEvents?.();
     this.unsubscribeEvents = null;
     for (const client of this.clients) {
@@ -91,6 +92,13 @@ export class DashboardHub {
       });
     });
     socket.on('close', () => {
+      this.disposeClient(client);
+      this.clients.delete(client);
+    });
+    socket.on('error', (err) => {
+      // ws emits 'error' on abrupt resets and malformed frames. Without a listener Node
+      // throws and takes down the whole orchestrator, so contain it and drop the client.
+      this.deps.log.warn({ err }, 'dashboard socket error');
       this.disposeClient(client);
       this.clients.delete(client);
     });
@@ -246,7 +254,9 @@ export class DashboardHub {
       }
     } finally {
       if (timer) clearTimeout(timer);
-      client.logStreams.delete(channel);
+      // Only clear our own entry: a re-subscribe may already have registered a newer
+      // controller for this channel, and deleting it would orphan a live stream.
+      if (client.logStreams.get(channel) === controller) client.logStreams.delete(channel);
     }
   }
 

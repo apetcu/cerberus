@@ -28,7 +28,7 @@ export const capabilitiesSchema = z.object({
   memoryMb: z.number().int().min(64).max(16384).default(512),
   pidsLimit: z.number().int().min(16).max(4096).default(256),
   updatedAt: z.string().nullable().default(null),
-});
+}).strict();
 export type Capabilities = z.infer<typeof capabilitiesSchema>;
 
 export interface ConversationEntry {

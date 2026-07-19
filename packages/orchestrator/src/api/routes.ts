@@ -50,6 +50,21 @@ export function isAuthorized(
   return queryToken !== null && secretEquals(queryToken, token);
 }
 
+/**
+ * Blocks cross-site browser requests to mutating routes. A browser always sends Origin on
+ * these; non-browser clients (curl, probes) send none and are allowed through, so this
+ * costs nothing operationally while removing the CSRF vector on a tokenless console.
+ */
+function isSameOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) });
@@ -82,9 +97,14 @@ export function createApiHandler(deps: ApiDeps) {
       return true;
     }
 
+    const method = req.method ?? 'GET';
+    if (method !== 'GET' && !isSameOrigin(req)) {
+      json(res, 403, { error: 'cross-origin request rejected' });
+      return true;
+    }
+
     try {
       const parts = url.pathname.split('/').filter(Boolean); // ['api', 'threads', key, sub?]
-      const method = req.method ?? 'GET';
 
       if (parts[1] === 'overview' && method === 'GET') {
         json(res, 200, await deps.snapshots.overview());
