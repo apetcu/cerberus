@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   capabilitiesSchema, clientMessageSchema, DEFAULT_TOOLS, logsChannel,
-  OVERVIEW_CHANNEL, serverMessageSchema, threadChannel,
+  OVERVIEW_CHANNEL, serverMessageSchema, threadChannel, workspaceUsageSchema,
 } from '../src/dashboard.js';
 
 describe('channels', () => {
@@ -47,5 +47,25 @@ describe('ws envelopes', () => {
     expect(log.type).toBe('log');
     const err = serverMessageSchema.parse({ type: 'error', message: 'nope' });
     expect(err.type).toBe('error');
+  });
+});
+
+describe('workspaceUsageSchema', () => {
+  it('parses a well-formed usage block', () => {
+    const usage = { totalBytes: 2048, capBytes: 10_737_418_240, count: 3, oldestTouchedAt: '2026-07-19T00:00:00.000Z' };
+    expect(workspaceUsageSchema.parse(usage)).toEqual(usage);
+  });
+
+  it('allows a null oldestTouchedAt when there are no workspaces', () => {
+    const usage = { totalBytes: 0, capBytes: 10_737_418_240, count: 0, oldestTouchedAt: null };
+    expect(workspaceUsageSchema.parse(usage)).toEqual(usage);
+  });
+
+  it('rejects a negative byte count and unknown keys', () => {
+    expect(() => workspaceUsageSchema.parse({ totalBytes: -1, capBytes: 1, count: 0, oldestTouchedAt: null }))
+      .toThrow();
+    expect(() => workspaceUsageSchema.parse({
+      totalBytes: 0, capBytes: 1, count: 0, oldestTouchedAt: null, extra: true,
+    })).toThrow();
   });
 });

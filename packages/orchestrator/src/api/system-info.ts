@@ -1,4 +1,4 @@
-import type { SystemInfo } from '@cerberus/protocol';
+import type { SystemInfo, WorkspaceUsage } from '@cerberus/protocol';
 import type { Config } from '../config.js';
 import type { SlackStatus } from '../slack/gateway.js';
 
@@ -11,6 +11,7 @@ export interface SystemInfoDeps {
     postgres: () => Promise<unknown>;
     runtime: () => Promise<unknown>;
   };
+  workspaces: () => Promise<WorkspaceUsage>;
 }
 
 /**
@@ -23,8 +24,8 @@ export async function buildSystemInfo(deps: SystemInfoDeps): Promise<SystemInfo>
   const probe = async (fn: () => Promise<unknown>): Promise<'ok' | 'error'> => {
     try { await fn(); return 'ok'; } catch { return 'error'; }
   };
-  const [redis, postgres, runtime] = await Promise.all([
-    probe(deps.checks.redis), probe(deps.checks.postgres), probe(deps.checks.runtime),
+  const [redis, postgres, runtime, workspaces] = await Promise.all([
+    probe(deps.checks.redis), probe(deps.checks.postgres), probe(deps.checks.runtime), deps.workspaces(),
   ]);
   return {
     runtime: cfg.RUNTIME,
@@ -33,6 +34,11 @@ export async function buildSystemInfo(deps: SystemInfoDeps): Promise<SystemInfo>
     config: {
       idleTimeoutMs: cfg.IDLE_TIMEOUT_MS,
       reaperIntervalMs: cfg.REAPER_INTERVAL_MS,
+      livenessIntervalMs: cfg.LIVENESS_INTERVAL_MS,
+      heartbeatGraceMs: cfg.HEARTBEAT_GRACE_MS,
+      sweepIntervalMs: cfg.SWEEP_INTERVAL_MS,
+      workspaceGcIntervalMs: cfg.WORKSPACE_GC_INTERVAL_MS,
+      workspacesMaxMb: cfg.WORKSPACES_MAX_MB,
       maxConcurrentAgents: cfg.MAX_CONCURRENT_AGENTS,
       agentCpu: cfg.AGENT_CPU,
       agentMemoryMb: cfg.AGENT_MEMORY_MB,
@@ -46,5 +52,6 @@ export async function buildSystemInfo(deps: SystemInfoDeps): Promise<SystemInfo>
     slack: deps.slack(),
     dependencies: { redis, postgres, runtime },
     drain: deps.drain(),
+    workspaces,
   };
 }

@@ -110,6 +110,13 @@ export async function buildApp(cfg: Config, log: Logger): Promise<{ start(): Pro
       postgres: () => pool.query('SELECT 1'),
       runtime: () => runtime.list(),
     },
+    // Placeholder until WorkspaceGC lands: real usage will be wired in as () => gc.usage().
+    workspaces: async () => ({
+      totalBytes: 0,
+      capBytes: cfg.WORKSPACES_MAX_MB * 1024 * 1024,
+      count: 0,
+      oldestTouchedAt: null,
+    }),
   });
 
   return {

@@ -103,7 +103,8 @@ export type ServerMessage = z.infer<typeof serverMessageSchema>;
 export const ACTIVITY_CHANNEL = 'activity';
 
 export type ActivityKind =
-  | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted';
+  | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted'
+  | 'agent_died' | 'workspace_evicted';
 
 export interface ActivityEvent {
   /** ULID, stable key for the UI. */
@@ -114,6 +115,22 @@ export interface ActivityEvent {
   at: string;
 }
 
+/** Aggregate disk usage across every thread workspace, as sized by WorkspaceGC. */
+export interface WorkspaceUsage {
+  totalBytes: number;
+  capBytes: number;
+  count: number;
+  /** ISO-8601, or null when there are no workspaces. */
+  oldestTouchedAt: string | null;
+}
+
+export const workspaceUsageSchema = z.object({
+  totalBytes: z.number().int().nonnegative(),
+  capBytes: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+  oldestTouchedAt: z.string().nullable(),
+}).strict();
+
 export interface SystemInfo {
   runtime: 'docker' | 'k8s';
   agentImage: string;
@@ -121,6 +138,11 @@ export interface SystemInfo {
   config: {
     idleTimeoutMs: number;
     reaperIntervalMs: number;
+    livenessIntervalMs: number;
+    heartbeatGraceMs: number;
+    sweepIntervalMs: number;
+    workspaceGcIntervalMs: number;
+    workspacesMaxMb: number;
     maxConcurrentAgents: number;
     agentCpu: number;
     agentMemoryMb: number;
@@ -140,4 +162,5 @@ export interface SystemInfo {
   };
   dependencies: { redis: 'ok' | 'error'; postgres: 'ok' | 'error'; runtime: 'ok' | 'error' };
   drain: { enabled: boolean; since: string | null };
+  workspaces: WorkspaceUsage;
 }

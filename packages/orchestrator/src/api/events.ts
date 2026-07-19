@@ -1,8 +1,14 @@
 export interface CerberusEvent {
-  kind: 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted';
+  kind:
+    | 'agent_spawned' | 'agent_stopped' | 'agent_failed' | 'message_routed' | 'reply_posted'
+    | 'agent_died' | 'workspace_evicted';
   threadKey: string;
   /** ISO-8601 */
   at: string;
+  /** Present only when kind is 'agent_died'. */
+  cause?: 'container_gone' | 'container_exited' | 'heartbeat_stale';
+  /** Present only when kind is 'workspace_evicted'. */
+  bytes?: number;
 }
 
 type Listener = (event: CerberusEvent) => void;

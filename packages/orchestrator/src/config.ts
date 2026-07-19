@@ -14,6 +14,13 @@ const schema = z.object({
   AGENT_NETWORK: z.string().default(''),
   IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
   REAPER_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+  // 0 disables the loop; the other operational loops share this convention.
+  LIVENESS_INTERVAL_MS: z.coerce.number().int().nonnegative().default(15_000),
+  HEARTBEAT_GRACE_MS: z.coerce.number().int().positive().default(60_000),
+  SWEEP_INTERVAL_MS: z.coerce.number().int().nonnegative().default(20_000),
+  WORKSPACE_GC_INTERVAL_MS: z.coerce.number().int().nonnegative().default(300_000),
+  // 0 disables the GC entirely.
+  WORKSPACES_MAX_MB: z.coerce.number().int().nonnegative().default(10_240),
   MAX_CONCURRENT_AGENTS: z.coerce.number().int().positive().default(50),
   AGENT_CPU: z.coerce.number().positive().default(0.5),
   AGENT_MEMORY_MB: z.coerce.number().int().positive().default(512),
