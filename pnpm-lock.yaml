@@ -75,6 +75,9 @@ importers:
       ulid:
         specifier: ^2.3.0
         version: 2.4.0
+      ws:
+        specifier: ^8.21.1
+        version: 8.21.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -91,6 +94,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       testcontainers:
         specifier: ^10.16.0
         version: 10.28.0
