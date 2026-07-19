@@ -3,6 +3,7 @@ import pino from 'pino';
 import { encodePayload, OUTBOX_STREAM, type AgentOutbound } from '@cerberus/protocol';
 import { OutboxConsumer, type SlackPoster } from '../src/mailbox/outbox-consumer.js';
 import type { DeliveryGuard, StreamsClient } from '../src/mailbox/redis-stores.js';
+import { EventBus } from '../src/api/events.js';
 
 const log = pino({ level: 'silent' });
 
@@ -69,6 +70,27 @@ describe('OutboxConsumer.handleEntry', () => {
     await c.handleEntry('6-0', ['payload', '{bad']);
     expect(posted).toEqual([]);
     expect(acked).toEqual(['6-0']);
+  });
+
+  it('publishes reply_posted after a successful post', async () => {
+    const { redis, poster, guard } = fakes(true);
+    const events = new EventBus();
+    const seen: string[] = [];
+    events.onEvent((e) => seen.push(e.kind));
+    const c = new OutboxConsumer(redis, poster, guard, log, events);
+    await c.handleEntry('5-0', encodePayload(out('a')));
+    expect(seen).toEqual(['reply_posted']);
+  });
+
+  it('does not publish reply_posted when the post fails', async () => {
+    const { redis, guard } = fakes(true);
+    const poster: SlackPoster = { postToThread: async () => { throw new Error('slack down'); } };
+    const events = new EventBus();
+    const seen: string[] = [];
+    events.onEvent((e) => seen.push(e.kind));
+    const c = new OutboxConsumer(redis, poster, guard, log, events);
+    await c.handleEntry('5-0', encodePayload(out('a')));
+    expect(seen).toEqual([]);
   });
 });
 
