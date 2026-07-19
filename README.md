@@ -121,6 +121,22 @@ Per-agent tool toggles, model, and resource limits. Stored in Postgres, survivin
   <img src="assets/console-capabilities.png" width="900" alt="Capabilities configuration panel">
 </p>
 
+### Activity
+
+A fleet-wide, chronological feed of what just happened: spawns, stops, failures, routed messages, and posted replies, each with a relative timestamp and the thread it belongs to. It is backed by an in-memory ring buffer capped at 500 events, pushed over the WebSocket as deltas. Deliberately not persisted: this view answers "what just happened," and a restart clearing it is acceptable.
+
+<p align="center">
+  <img src="assets/console-activity.png" width="900" alt="Activity feed showing recent agent lifecycle events">
+</p>
+
+### System
+
+Read-only deployment state: runtime and agent image, orchestrator and Node versions, the safe subset of config, Slack's connection state and resolved bot identity, and dependency health for Redis, Postgres, and the runtime. No secret ever reaches this payload: the dashboard token appears only as a boolean. It also carries the drain switch, which pauses new agent spawns without stopping running ones, for deploys.
+
+<p align="center">
+  <img src="assets/console-system.png" width="900" alt="System view showing deployment configuration, dependency health, and the drain switch">
+</p>
+
 ## Examples
 
 ### Talk to a thread's agent
@@ -194,7 +210,7 @@ ws.onmessage = (e) => {
 };
 ```
 
-Channels are `overview`, `thread:<threadKey>`, and `logs:<threadKey>`.
+Channels are `overview`, `activity`, `thread:<threadKey>`, and `logs:<threadKey>`.
 
 ### Swap in a real brain
 
