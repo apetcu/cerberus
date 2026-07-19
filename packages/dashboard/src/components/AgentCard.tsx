@@ -7,7 +7,7 @@ export function AgentCard({ agent, onOpen }: { agent: AgentSummary; onOpen: () =
   return (
     <button
       onClick={onOpen}
-      className="group rounded-lg border border-line bg-surface p-4 text-left transition
+      className="rounded-lg border border-line bg-surface p-4 text-left transition
                  hover:border-line-strong hover:bg-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <div className="flex items-start justify-between gap-3">

@@ -13,6 +13,7 @@ type Handler = (message: ServerMessage) => void;
 class ConnectionManager {
   private socket: WebSocket | null = null;
   private backoffMs = 1000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly channels = new Map<string, number>();
   private readonly handlers = new Set<Handler>();
   private readonly statusListeners = new Set<(s: ConnectionStatus) => void>();
@@ -21,6 +22,10 @@ class ConnectionManager {
   private ensureSocket(): void {
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return;
 
+    // A reconnect is already scheduled: honor the backoff rather than opening a socket
+    // immediately just because another component mounted mid-outage.
+    if (this.reconnectTimer !== null) return;
+
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const token = new URLSearchParams(location.search).get('token');
     const url = `${proto}://${location.host}/api/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
@@ -28,6 +33,10 @@ class ConnectionManager {
     this.socket = socket;
 
     socket.addEventListener('open', () => {
+      if (this.reconnectTimer !== null) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       this.backoffMs = 1000;
       this.setStatus('open');
       for (const channel of this.channels.keys()) this.send({ type: 'subscribe', channel });
@@ -39,7 +48,10 @@ class ConnectionManager {
     });
     socket.addEventListener('close', () => {
       this.setStatus('reconnecting');
-      setTimeout(() => this.ensureSocket(), this.backoffMs);
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        this.ensureSocket();
+      }, this.backoffMs);
       this.backoffMs = Math.min(this.backoffMs * 2, 15_000);
     });
   }
@@ -133,8 +145,19 @@ export function useLogChannel(channel: string | null, paused: boolean): LogState
       if (message.type !== 'log' && message.type !== 'log_end') return;
       if (message.channel !== channel) return;
       if (message.type === 'log') {
-        if (pausedRef.current) buffer.current.push(...message.lines);
-        else setLines((prev) => [...prev, ...message.lines].slice(-2000));
+        if (pausedRef.current) {
+          buffer.current.push(...message.lines);
+          // Bound the pause buffer: a long pause on a chatty agent must not grow without limit.
+          if (buffer.current.length > 5000) {
+            buffer.current.splice(0, buffer.current.length - 5000);
+          }
+        } else {
+          // Drain the buffer in the same update: a message arriving between the un-pause
+          // render and the flush effect must never jump ahead of older buffered lines.
+          const pending = buffer.current;
+          buffer.current = [];
+          setLines((prev) => [...prev, ...pending, ...message.lines].slice(-2000));
+        }
       } else if (message.type === 'log_end') {
         setEnded(message.reason);
       }
