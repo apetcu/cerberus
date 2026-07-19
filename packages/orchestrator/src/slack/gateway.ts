@@ -44,12 +44,17 @@ export class SlackGateway implements SlackPoster {
     });
 
     this.app.event('app_mention', async ({ event, body }) => {
+      this.status.lastEventAt = new Date().toISOString();
       const e = event as unknown as SlackMessageEvent;
       await this.dispatch((body as { team_id?: string }).team_id ?? '', e);
     });
 
     // Thread replies (no mention needed) — only for threads we already own.
     this.app.event('message', async ({ event, body }) => {
+      // Stamped before filtering: lastEventAt is a liveness signal for the socket, so an
+      // event we deliberately ignore still proves Slack is delivering. Stamping only routed
+      // events would make a healthy connection look dead during unrelated channel traffic.
+      this.status.lastEventAt = new Date().toISOString();
       const e = event as unknown as SlackMessageEvent;
       if (e.subtype || e.bot_id || !e.thread_ts || !e.user) return;
       try {
